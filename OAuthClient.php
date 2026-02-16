@@ -91,4 +91,69 @@ class OAuthClient
 
         return $tokens['access_token'];
     }
+
+    // Функция загрузки токенов из файла и проверки их актуальности
+    private function loadTokens(): array
+    {
+        $file = __DIR__ . '/storage/tokens.json';
+
+        if (!file_exists($file)) {
+            throw new Exception("Токены не найдены. Авторизуйтесь.");
+        }
+
+        return json_decode(file_get_contents($file), true);
+    }
+
+    // Функция проверки срока действия токена
+    private function isTokenExpired(array $tokens): bool
+    {
+        return time() >= ($tokens['createdAt'] + $tokens['expires_in'] - 60);
+    }
+
+    // Функция получения валидных токенов (обновляет при необходимости)
+    private function getValidTokens(): array
+    {
+        $tokens = $this->loadTokens();
+
+        if ($this->isTokenExpired($tokens)) {
+            $tokens = $this->refreshToken($tokens);
+
+            file_put_contents(
+                __DIR__ . '/storage/tokens.json',
+                json_encode($tokens, JSON_PRETTY_PRINT)
+            );
+        }
+
+        return $tokens;
+    }
+
+    // Функция получения информации об аккаунте с помощью API и токена доступа
+    public function getAccountInfo(): array
+    {
+        $tokens = $this->getValidTokens();
+
+        $accessToken = $tokens['access_token'];
+        $apiDomain = $this->config['baseDomain'];
+
+        $url = "https://{$apiDomain}/api/v4/account";
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER => [
+                "Authorization: Bearer {$accessToken}",
+                "Content-Type: application/json"
+            ]
+        ]);
+
+        $raw = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($httpCode !== 200) {
+            throw new Exception("Ошибка API: $raw");
+        }
+
+        return json_decode($raw, true);
+    }
 }
