@@ -5,6 +5,7 @@ require __DIR__ . '/OAuthClient.php';
 $client = new OAuthClient($config);
 $storageFile = __DIR__ . '/storage/tokens.json';
 
+// Обработка кнопки принудительного обновления токена
 if (isset($_GET['forceRefresh'])) {
 
     $tokens = json_decode(file_get_contents($storageFile), true);
@@ -13,6 +14,7 @@ if (isset($_GET['forceRefresh'])) {
     exit;
 }
 
+// Обработка кнопки выхода
 if (isset($_GET['logout'])) {
     if (file_exists($storageFile)) {
         unlink($storageFile);
@@ -38,6 +40,8 @@ if (isset($_GET['logout'])) {
 
         <?
         try {
+
+            // Если пришел код авторизации, обмениваем его на токены
             if (isset($_GET['code'])) {
 
                 $tokens = $client->exchangeCodeForTokens($_GET['code']);
@@ -54,11 +58,16 @@ if (isset($_GET['logout'])) {
                 echo "<pre class='tokenBox'>";
                 print_r($tokens);
                 echo "</pre>";
+
+            // Если код не пришел, проверяем наличие токенов 
             } else {
 
+                // Если токенов нет, предлагаем авторизоваться
                 if (!file_exists($storageFile)) {
                     echo "<h3>Авторизация не выполнена</h3>";
                     echo "Сначала выполните вход через OAuth на <a href='index.php'>главной странице</a>.";
+
+                // Если токены есть, показываем информацию для авторизованного пользователя    
                 } else {
 
                     $accessToken = $client->getAccessToken();

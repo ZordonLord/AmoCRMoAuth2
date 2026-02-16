@@ -9,6 +9,7 @@ class OAuthClient
         $this->config = $config;
     }
 
+    // Функция обмена кода авторизации на токены доступа
     public function exchangeCodeForTokens(string $code): array
     {
         $url = "https://{$this->config['baseDomain']}/oauth2/access_token";
@@ -28,6 +29,7 @@ class OAuthClient
         return $response;
     }
 
+    // Функция отправки POST-запроса и обработки ответа
     private function sendRequest(string $url, array $data): array
     {
         $ch = curl_init($url);
@@ -51,6 +53,7 @@ class OAuthClient
         return json_decode($raw, true);
     }
 
+    // Функция обновления токена доступа
     public function refreshToken(array $tokens): array
     {
         $url = "https://{$this->config['baseDomain']}/oauth2/access_token";
@@ -72,6 +75,7 @@ class OAuthClient
         return $response;
     }
 
+    // Функция получения актуального токена доступа (с проверкой срока действия)
     public function getAccessToken(): string
     {
         $file = __DIR__ . '/storage/tokens.json';

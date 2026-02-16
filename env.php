@@ -1,5 +1,6 @@
 <?php
 
+// Функция загрузки параметров из .env файла
 function loadEnv(string $path): void
 {
     if (!file_exists($path)) {
