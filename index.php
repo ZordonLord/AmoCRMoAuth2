@@ -18,14 +18,12 @@ $isAuthorized = file_exists($storageFile); // Проверяем наличие 
     <div class="container">
         <h2>Авторизация amoCRM</h2>
 
-        // Если авторизованы, показываем кнопку выхода
-        <?php if ($isAuthorized): ?>
+        <?php if ($isAuthorized): // Если авторизованы, показываем кнопку выхода ?>
             <a href="callback.php?logout=1" class="btn">Выйти</a>
             <br /><br />
             <a href="callback.php" class="btn">Перейти к callback странице</a>
-
-        // Если не авторизованы, показываем кнопку авторизации    
-        <?php else: ?>
+   
+        <?php else: // Если не авторизованы, показываем кнопку авторизации ?>
             <script
                 class="amocrm_oauth"
                 charset="utf-8"
