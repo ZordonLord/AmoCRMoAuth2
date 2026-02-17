@@ -1,6 +1,9 @@
 <?php
-$config = require __DIR__ . '/config.php';
-$storageFile = __DIR__ . '/storage/tokens.json';
+$app = require __DIR__ . '/bootstrap.php';
+$config = $app['config'];
+$client = $app['client'];
+$storageFile = $app['storageFile'];
+
 $isAuthorized = file_exists($storageFile); // Проверяем наличие токенов для определения авторизации
 
 ?>

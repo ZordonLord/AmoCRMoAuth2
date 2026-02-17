@@ -8,8 +8,8 @@
 ## Запуск через докер:
 
 ```
-docker build -t my-php-app .  
-docker run -p 8000:8000 -v ${PWD}:/app my-php-app
+docker build -t amocrm-oauth-php . 
+docker run -p 8000:8000 -v ${PWD}:/app amocrm-oauth-php
 ```
 
 Перейти на:

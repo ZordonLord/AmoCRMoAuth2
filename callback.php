@@ -1,9 +1,9 @@
 <?php
 
-$config = require __DIR__ . '/config.php';
-require __DIR__ . '/OAuthClient.php';
-$client = new OAuthClient($config);
-$storageFile = __DIR__ . '/storage/tokens.json';
+$app = require __DIR__ . '/bootstrap.php';
+$config = $app['config'];
+$client = $app['client'];
+$storageFile = $app['storageFile'];
 
 // Обработка кнопки принудительного обновления токена
 if (isset($_GET['forceRefresh'])) {
