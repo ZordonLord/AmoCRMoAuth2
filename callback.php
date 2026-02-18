@@ -20,15 +20,6 @@ if (isset($_GET['forceRefresh'])) {
     exit;
 }
 
-// Обработка кнопки выхода
-if (isset($_GET['logout'])) {
-    if (file_exists($storageFile)) {
-        unlink($storageFile);
-    }
-    header("Location: index.php");
-    exit;
-}
-
 ?>
 
 <!doctype html>
@@ -79,7 +70,7 @@ if (isset($_GET['logout'])) {
                 echo "<h3>Токены получены</h3>";
                 echo "<a href='index.php' class='btn'>Вернуться на главную страницу</a><br /><br />";
                 echo "<a href='callback.php?forceRefresh=1' class='btn'>Обновить токен</a><br /><br />";
-                echo "<a href='callback.php?logout=1' class='btn'>Выйти</a><br /><br />";
+                echo $client->renderButton();
                 echo "<pre class='tokenBox'>";
                 print_r($tokens);
                 echo "</pre>";
@@ -90,7 +81,9 @@ if (isset($_GET['logout'])) {
                 // Если токенов нет, предлагаем авторизоваться
                 if (!file_exists($storageFile)) {
                     echo "<h3>Авторизация не выполнена</h3>";
-                    echo "Сначала выполните вход через OAuth на <a href='index.php'>главной странице</a>.";
+                    echo "Сначала выполните вход через AmoCRM<br><br>"; 
+                    echo $client->renderButton();
+                    echo "<br><br>Или перейдите на <a href='index.php'>главную страницу</a>.";
 
                     // Если токены есть, показываем информацию для авторизованного пользователя    
                 } else {
@@ -120,7 +113,7 @@ if (isset($_GET['logout'])) {
                     echo "<h3>Авторизация активна</h3>";
                     echo "<a href='index.php' class='btn'>Вернуться на главную страницу</a><br /><br />";
                     echo "<a href='callback.php?forceRefresh=1' class='btn'>Обновить токен</a><br /><br />";
-                    echo "<a href='callback.php?logout=1' class='btn'>Выйти</a><br /><br />";
+                    echo $client->renderButton();
                     echo "<b>Актуальные данные:</b>";
                     echo "<pre class='tokenBox'>";
                     print_r($tokens);

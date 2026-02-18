@@ -156,4 +156,46 @@ class OAuthClient
 
         return json_decode($raw, true);
     }
+
+    public function isAuthorized(): bool
+    {
+        try {
+            $this->loadTokens();
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    public function renderButton(): string
+    {
+        if ($this->isAuthorized()) {
+            return '
+            <form action="auth.php" method="post">
+            <button class="btn">Выйти</button>
+            <input type="hidden" name="action" value="logout">
+            </form>';
+        }
+
+        return '
+        <script
+            class="amocrm_oauth"
+            charset="utf-8"
+            data-client-id="' . htmlspecialchars($this->config['clientId']) . '"
+            data-title="Авторизоваться через amoCRM"
+            data-compact="false"
+            data-color="default"
+            data-state="state"
+            data-mode="popup"
+            src="https://www.amocrm.ru/auth/button.min.js">
+        </script>';
+    }
+
+    public function logout(): void
+    {
+        $file = __DIR__ . '/storage/tokens.json';
+        if (file_exists($file)) {
+            unlink($file);
+        }
+    }
 }
