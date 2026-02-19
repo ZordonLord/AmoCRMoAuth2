@@ -5,21 +5,6 @@ $config = $app['config'];
 $client = $app['client'];
 $storageFile = $app['storageFile'];
 
-// Обработка кнопки принудительного обновления токена
-if (isset($_GET['forceRefresh'])) {
-
-    $tokens = json_decode(file_get_contents($storageFile), true);
-    $newTokens = $client->refreshToken($tokens);
-    try {
-        $account = $client->getAccountInfo();
-    } catch (Exception $e) {
-        $account = null;
-        echo "Ошибка OAuth или API: " . $e->getMessage();
-    }
-    header("Location: callback.php");
-    exit;
-}
-
 ?>
 
 <!doctype html>
@@ -69,7 +54,12 @@ if (isset($_GET['forceRefresh'])) {
 
                 echo "<h3>Токены получены</h3>";
                 echo "<a href='index.php' class='btn'>Вернуться на главную страницу</a><br /><br />";
-                echo "<a href='callback.php?forceRefresh=1' class='btn'>Обновить токен</a><br /><br />";
+
+                echo "<form action='auth.php' method='post'>";
+                echo "<input type='hidden' name='action' value='forceRefresh'>";
+                echo "<button type='submit' class='btn'>Обновить токен</button>";
+                echo "</form><br />";
+
                 echo $client->renderButton();
                 echo "<pre class='tokenBox'>";
                 print_r($tokens);
@@ -81,7 +71,7 @@ if (isset($_GET['forceRefresh'])) {
                 // Если токенов нет, предлагаем авторизоваться
                 if (!file_exists($storageFile)) {
                     echo "<h3>Авторизация не выполнена</h3>";
-                    echo "Сначала выполните вход через AmoCRM<br><br>"; 
+                    echo "Сначала выполните вход через AmoCRM<br><br>";
                     echo $client->renderButton();
                     echo "<br><br>Или перейдите на <a href='index.php'>главную страницу</a>.";
 
@@ -112,9 +102,14 @@ if (isset($_GET['forceRefresh'])) {
 
                     echo "<h3>Авторизация активна</h3>";
                     echo "<a href='index.php' class='btn'>Вернуться на главную страницу</a><br /><br />";
-                    echo "<a href='callback.php?forceRefresh=1' class='btn'>Обновить токен</a><br /><br />";
+
+                    echo "<form action='auth.php' method='post'>";
+                    echo "<input type='hidden' name='action' value='forceRefresh'>";
+                    echo "<button type='submit' class='btn'>Обновить токен</button>";
+                    echo "</form><br />";
+
                     echo $client->renderButton();
-                    echo "<b>Актуальные данные:</b>";
+                    echo "<br /><b>Актуальные данные:</b>";
                     echo "<pre class='tokenBox'>";
                     print_r($tokens);
                     echo "</pre>";

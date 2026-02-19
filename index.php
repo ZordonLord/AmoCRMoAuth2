@@ -1,8 +1,7 @@
 <?php
+
 $app = require __DIR__ . '/bootstrap.php';
-$config = $app['config'];
 $client = $app['client'];
-$storageFile = $app['storageFile'];
 
 ?>
 
@@ -24,4 +23,5 @@ $storageFile = $app['storageFile'];
         <a href="callback.php" class="btn">Перейти к callback странице</a>
     </div>
 </body>
+
 </html>

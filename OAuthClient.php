@@ -157,6 +157,7 @@ class OAuthClient
         return json_decode($raw, true);
     }
 
+    // Функция проверки, авторизован ли пользователь (наличие и валидность токенов)
     public function isAuthorized(): bool
     {
         try {
@@ -167,6 +168,7 @@ class OAuthClient
         }
     }
 
+    // Функция для отображения кнопки авторизации или выхода в зависимости от состояния авторизации
     public function renderButton(): string
     {
         if ($this->isAuthorized()) {
@@ -191,11 +193,34 @@ class OAuthClient
         </script>';
     }
 
+    // Функция для удаления токенов при выходе
     public function logout(): void
     {
         $file = __DIR__ . '/storage/tokens.json';
         if (file_exists($file)) {
             unlink($file);
         }
+    }
+
+    // Функция для принудительного обновления токена
+    public function forceRefreshToken(): array
+    {
+        $file = __DIR__ . '/storage/tokens.json';
+
+        if (!file_exists($file)) {
+            throw new Exception('Файл токенов не найден');
+        }
+
+        $tokens = json_decode(file_get_contents($file), true);
+
+        if (empty($tokens['refresh_token'])) {
+            throw new Exception('Нет refresh_token');
+        }
+
+        $newTokens = $this->refreshToken($tokens);
+
+        file_put_contents($file, json_encode($newTokens, JSON_PRETTY_PRINT));
+
+        return $newTokens;
     }
 }
