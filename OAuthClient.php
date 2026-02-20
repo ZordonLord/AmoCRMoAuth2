@@ -223,4 +223,11 @@ class OAuthClient
 
         return $newTokens;
     }
+
+    function saveTokens(array $tokens): void {
+    file_put_contents(
+        __DIR__ . '/storage/tokens.json',
+        json_encode($tokens, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
+    );
+}
 }
