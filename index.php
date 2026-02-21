@@ -18,7 +18,7 @@ $client = $app['client'];
     <div class="container">
         <h2>Авторизация amoCRM</h2>
 
-        <?= $client->renderButton() ?>
+        <?= $client->renderAuthButton() ?>
         <br><br>
         <a href="callback.php" class="btn">Перейти к callback странице</a>
     </div>

@@ -182,29 +182,15 @@ class OAuthClient
         }
     }
 
-    // Функция для отображения кнопки авторизации или выхода в зависимости от состояния авторизации
-    public function renderButton(): string
+    // Функция для рендеринга кнопки авторизации/выхода
+    public function renderAuthButton(): string
     {
-        if ($this->isAuthorized()) {
-            return '
-            <form action="auth.php" method="post">
-            <button class="btn">Выйти</button>
-            <input type="hidden" name="action" value="logout">
-            </form>';
-        }
+        $isAuthorized = $this->isAuthorized();
+        $clientId = $this->config['clientId'];
 
-        return '
-        <script
-            class="amocrm_oauth"
-            charset="utf-8"
-            data-client-id="' . htmlspecialchars($this->config['clientId']) . '"
-            data-title="Авторизоваться через amoCRM"
-            data-compact="false"
-            data-color="default"
-            data-state="state"
-            data-mode="popup"
-            src="https://www.amocrm.ru/auth/button.min.js">
-        </script>';
+        ob_start();
+        require __DIR__ . '/views/auth_button.php';
+        return ob_get_clean();
     }
 
     // Функция для удаления токенов при выходе

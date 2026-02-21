@@ -60,7 +60,7 @@ function escape($value): string
 
             <br>
 
-            <?= $client->renderButton() ?>
+            <?= $client->renderAuthButton() ?>
 
             <?php if ($tokens): ?>
                 <br><b>Актуальные данные:</b>
@@ -73,7 +73,7 @@ function escape($value): string
             <h3>Авторизация не выполнена</h3>
             <p>Сначала выполните вход через amoCRM</p>
 
-            <?= $client->renderButton() ?>
+            <?= $client->renderAuthButton() ?>
 
             <br><br>
             Или перейдите на <a href="index.php">главную страницу</a>.
