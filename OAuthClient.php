@@ -38,61 +38,34 @@ class OAuthClient
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode($data),
-            CURLOPT_HTTPHEADER => ['Content-Type: application/json']
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_CONNECTTIMEOUT => 5
         ]);
 
         $raw = curl_exec($ch);
-        $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
+        if ($raw === false) {
+            throw new Exception('Network error: ' . curl_error($ch));
+        }
+
+        $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
         if ($http !== 200) {
-            throw new Exception("OAuth error: $raw");
+            throw new Exception("OAuth error ($http): $raw");
         }
 
-        return json_decode($raw, true);
-    }
+        $decoded = json_decode($raw, true);
 
-    // Функция обновления токена доступа
-    public function refreshToken(array $tokens): array
-    {
-        $url = "https://{$this->config['baseDomain']}/oauth2/access_token";
-
-        $payload = [
-            'client_id'     => $this->config['clientId'],
-            'client_secret' => $this->config['clientSecret'],
-            'grant_type'    => 'refresh_token',
-            'refresh_token' => $tokens['refresh_token'],
-            'redirect_uri'  => $this->config['redirectUri']
-        ];
-
-        $response = $this->sendRequest($url, $payload);
-
-        $response['createdAt'] = time();
-
-        file_put_contents(__DIR__ . '/storage/tokens.json', json_encode($response, JSON_PRETTY_PRINT));
-
-        return $response;
-    }
-
-    // Функция получения актуального токена доступа (с проверкой срока действия)
-    public function getAccessToken(): string
-    {
-        $file = __DIR__ . '/storage/tokens.json';
-        if (!file_exists($file)) {
-            throw new Exception("Токены не найдены, нужна авторизация");
+        if (!is_array($decoded)) {
+            throw new Exception("Invalid JSON response");
         }
 
-        $tokens = json_decode(file_get_contents($file), true);
-
-        if (time() > ($tokens['createdAt'] + $tokens['expires_in'] - 300)) {
-            $tokens = $this->refreshToken($tokens);
-        }
-
-        return $tokens['access_token'];
+        return $decoded;
     }
 
-    // Функция загрузки токенов из файла и проверки их актуальности
+    // Функция загрузки токенов из файла
     private function loadTokens(): array
     {
         $file = __DIR__ . '/storage/tokens.json';
@@ -110,6 +83,35 @@ class OAuthClient
         return time() >= ($tokens['createdAt'] + $tokens['expires_in'] - 60);
     }
 
+    // Функция для сохранения токенов в файл
+    function saveTokens(array $tokens): void
+    {
+        file_put_contents(
+            __DIR__ . '/storage/tokens.json',
+            json_encode($tokens, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
+        );
+    }
+
+    // Функция обновления токена доступа (запрос нового)
+    public function refreshToken(array $tokens): array
+    {
+        $url = "https://{$this->config['baseDomain']}/oauth2/access_token";
+
+        $payload = [
+            'client_id'     => $this->config['clientId'],
+            'client_secret' => $this->config['clientSecret'],
+            'grant_type'    => 'refresh_token',
+            'refresh_token' => $tokens['refresh_token'],
+            'redirect_uri'  => $this->config['redirectUri']
+        ];
+
+        $response = $this->sendRequest($url, $payload);
+
+        $response['createdAt'] = time();
+
+        return $response;
+    }
+
     // Функция получения валидных токенов (обновляет при необходимости)
     private function getValidTokens(): array
     {
@@ -117,12 +119,24 @@ class OAuthClient
 
         if ($this->isTokenExpired($tokens)) {
             $tokens = $this->refreshToken($tokens);
-
-            file_put_contents(
-                __DIR__ . '/storage/tokens.json',
-                json_encode($tokens, JSON_PRETTY_PRINT)
-            );
+            $this->saveTokens($tokens);
         }
+
+        return $tokens;
+    }
+
+    // Функция получения актуального токена доступа
+    public function getAccessToken(): string
+    {
+        return $this->getValidTokens()['access_token'];
+    }
+
+    // Функция для принудительного обновления токена
+    public function forceRefreshToken(): array
+    {
+        $tokens = $this->loadTokens();
+        $tokens = $this->refreshToken($tokens);
+        $this->saveTokens($tokens);
 
         return $tokens;
     }
@@ -201,33 +215,4 @@ class OAuthClient
             unlink($file);
         }
     }
-
-    // Функция для принудительного обновления токена
-    public function forceRefreshToken(): array
-    {
-        $file = __DIR__ . '/storage/tokens.json';
-
-        if (!file_exists($file)) {
-            throw new Exception('Файл токенов не найден');
-        }
-
-        $tokens = json_decode(file_get_contents($file), true);
-
-        if (empty($tokens['refresh_token'])) {
-            throw new Exception('Нет refresh_token');
-        }
-
-        $newTokens = $this->refreshToken($tokens);
-
-        file_put_contents($file, json_encode($newTokens, JSON_PRETTY_PRINT));
-
-        return $newTokens;
-    }
-
-    function saveTokens(array $tokens): void {
-    file_put_contents(
-        __DIR__ . '/storage/tokens.json',
-        json_encode($tokens, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
-    );
-}
 }
