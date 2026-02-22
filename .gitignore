@@ -1,2 +1,3 @@
 .env
 /storage/tokens.json
+/storage/error.log
