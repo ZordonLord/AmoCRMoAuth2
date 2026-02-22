@@ -3,10 +3,94 @@
 class OAuthClient
 {
     private array $config;
+    private int $requestsInCurrentSecond = 0; // счётчик запросов для троттлинга
+    private int $currentSecond = 0; // текущая секунда для троттлинга
 
     public function __construct(array $config)
     {
         $this->config = $config;
+    }
+
+    // Функция для троттлинга запросов (не более 7 запросов в секунду)
+    private function throttle(): void
+    {
+        while (true) {
+            $sec = time();
+
+            if ($this->currentSecond !== $sec) {
+                $this->currentSecond = $sec;
+                $this->requestsInCurrentSecond = 0;
+            }
+
+            if ($this->requestsInCurrentSecond < 7) {
+                $this->requestsInCurrentSecond++;
+                break;
+            }
+
+            sleep(1);
+        }
+    }
+
+    // Функция отправки HTTP-запросов с помощью cURL
+    private function sendRequest(string $method, string $url, array $data = [], array $headers = [], int $retry = 1): array
+    {
+        $this->throttle();
+
+        $ch = curl_init($url);
+
+        $defaultHeaders = ['Content-Type: application/json'];
+        $headers = array_merge($defaultHeaders, $headers);
+
+        $options = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_CONNECTTIMEOUT => 5
+        ];
+
+        if (!empty($data)) {
+            $options[CURLOPT_POSTFIELDS] = json_encode($data);
+        }
+
+        curl_setopt_array($ch, $options);
+
+        $raw = curl_exec($ch);
+
+        if ($raw === false) {
+            $error = curl_error($ch);
+            curl_close($ch);
+
+            log_error('Network error', ['error' => $error]);
+            throw new Exception("Network error: $error");
+        }
+
+        $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        // retry при лимите или ошибке сервера
+        if (($http === 429 || $http >= 500) && $retry > 0) {
+            sleep(1);
+            return $this->sendRequest($method, $url, $data, $headers, $retry - 1);
+        }
+
+        if ($http !== 200) {
+            log_error('HTTP error', [
+                'status' => $http,
+                'response' => $raw,
+                'url' => $url
+            ]);
+            throw new Exception("HTTP error ($http)");
+        }
+
+        $decoded = json_decode($raw, true);
+
+        if (!is_array($decoded)) {
+            log_error('Invalid JSON response', ['response' => $raw]);
+            throw new Exception('Invalid JSON response');
+        }
+
+        return $decoded;
     }
 
     // Функция обмена кода авторизации на токены доступа
@@ -22,47 +106,11 @@ class OAuthClient
             'redirect_uri'  => $this->config['redirectUri']
         ];
 
-        $response = $this->sendRequest($url, $payload);
+        $response = $this->sendRequest('POST', $url, $payload);
 
         $response['createdAt'] = time();
 
         return $response;
-    }
-
-    // Функция отправки POST-запроса и обработки ответа
-    private function sendRequest(string $url, array $data): array
-    {
-        $ch = curl_init($url);
-
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => json_encode($data),
-            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-            CURLOPT_TIMEOUT => 10,
-            CURLOPT_CONNECTTIMEOUT => 5
-        ]);
-
-        $raw = curl_exec($ch);
-
-        if ($raw === false) {
-            throw new Exception('Network error: ' . curl_error($ch));
-        }
-
-        $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        if ($http !== 200) {
-            throw new Exception("OAuth error ($http): $raw");
-        }
-
-        $decoded = json_decode($raw, true);
-
-        if (!is_array($decoded)) {
-            throw new Exception("Invalid JSON response");
-        }
-
-        return $decoded;
     }
 
     // Функция загрузки токенов из файла
@@ -105,7 +153,7 @@ class OAuthClient
             'redirect_uri'  => $this->config['redirectUri']
         ];
 
-        $response = $this->sendRequest($url, $payload);
+        $response = $this->sendRequest('POST', $url, $payload);
 
         $response['createdAt'] = time();
 
@@ -141,34 +189,13 @@ class OAuthClient
         return $tokens;
     }
 
-    // Функция получения информации об аккаунте с помощью API и токена доступа
+    // Функция получения информации об аккаунте с помощью API amoCRM
     public function getAccountInfo(): array
     {
-        $tokens = $this->getValidTokens();
+        $accessToken = $this->getAccessToken();
+        $url = "https://{$this->config['baseDomain']}/api/v4/account";
 
-        $accessToken = $tokens['access_token'];
-        $apiDomain = $this->config['baseDomain'];
-
-        $url = "https://{$apiDomain}/api/v4/account";
-
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER => [
-                "Authorization: Bearer {$accessToken}",
-                "Content-Type: application/json"
-            ]
-        ]);
-
-        $raw = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        if ($httpCode !== 200) {
-            throw new Exception("Ошибка API: $raw");
-        }
-
-        return json_decode($raw, true);
+        return $this->sendRequest('GET', $url, [], ["Authorization: Bearer {$accessToken}"]);
     }
 
     // Функция проверки, авторизован ли пользователь (наличие и валидность токенов)
