@@ -46,7 +46,7 @@ class OAuthClient
             CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_TIMEOUT => 10,
-            CURLOPT_CONNECTTIMEOUT => 5
+            CURLOPT_CONNECTTIMEOUT => 10
         ];
 
         if (!empty($data)) {
@@ -279,5 +279,16 @@ class OAuthClient
         $response = $this->sendRequest('GET', $url, [], ["Authorization: Bearer {$token}"]);
 
         return $response['_embedded']['leads'] ?? [];
+    }
+
+    // Функция для добавления нового контакта
+    public function addContact(array $contact): array
+    {
+        $domain = $this->config['baseDomain'];
+        $token  = $this->getAccessToken();
+
+        $url = "https://{$domain}/api/v4/contacts";
+
+        return $this->sendRequest('POST', $url, [$contact], ["Authorization: Bearer {$token}"]);
     }
 }

@@ -25,7 +25,7 @@ if ($isAuthorized) {
         $contactFields = $client->getContactFields();
         $leadFields = $client->getLeadFields();
     } catch (Exception $e) {
-        echo "<p>Ошибка получения полей: " . e($e->getMessage()) . "</p>";
+        $error = $e->getMessage();
         $contactFields = [];
         $leadFields = [];
     }
@@ -35,9 +35,47 @@ if ($isAuthorized) {
         $contacts = $client->getContacts();
         $leads = $client->getLeads();
     } catch (Exception $e) {
-        echo "<p>Ошибка получения данных: " . e($e->getMessage()) . "</p>";
+        $error = $e->getMessage();
         $contacts = [];
         $leads = [];
+    }
+
+    if (isset($_POST['create_contact'])) {
+
+        $contact = [
+            'first_name' => $_POST['first_name'] ?? '',
+            'last_name'  => $_POST['last_name'] ?? '',
+        ];
+
+        $fields = $client->getContactFields();
+        $customFields = [];
+
+        foreach ($fields as $field) {
+            $fieldId = $field['id'];
+            $inputName = "cf_{$fieldId}";
+
+            if (!empty($_POST[$inputName])) {
+                $customFields[] = [
+                    'field_id' => $fieldId,
+                    'values' => [
+                        ['value' => $_POST[$inputName]]
+                    ]
+                ];
+            }
+        }
+
+        if (!empty($customFields)) {
+            $contact['custom_fields_values'] = $customFields;
+        }
+
+        try {
+            $result = $client->addContact($contact);
+
+            header("Location: callback.php");
+            exit;
+        } catch (Exception $e) {
+            $error = $e->getMessage();
+        }
     }
 }
 
@@ -61,7 +99,7 @@ if ($isAuthorized) {
             <div class="list-container">
                 <h3>Авторизация активна</h3>
 
-                <?php if ($account): ?>
+                <?php if (!empty($account)): ?>
                     <ul>
                         <li>Имя аккаунта: <?= e($account['name'] ?? '') ?></li>
                         <li>Поддомен: <?= e($account['subdomain'] ?? '') ?></li>
@@ -146,6 +184,32 @@ if ($isAuthorized) {
                 <?php else: ?>
                     <p>Контакты не найдены</p>
                 <?php endif; ?>
+            </div>
+
+            <!-- Форма для создания контакта -->
+            <div class="form-container">
+                <h2>Создать контакт</h2>
+
+                <form method="POST">
+
+                    <h3>Основные поля</h3>
+
+                    <input type="text" name="first_name" placeholder="Имя" required>
+                    <input type="text" name="last_name" placeholder="Фамилия">
+
+                    <h3>Дополнительные поля</h3>
+
+                    <?php foreach ($contactFields as $field): ?>
+                        <div>
+                            <label><?= htmlspecialchars($field['name']) ?></label>
+                            <input type="text" name="cf_<?= $field['id'] ?>">
+                        </div>
+                    <?php endforeach; ?>
+                    <br>
+                    <button type="submit" class="btn" name="create_contact">
+                        Добавить контакт
+                    </button>
+                </form>
             </div>
 
             <!-- Показываем список сделок -->

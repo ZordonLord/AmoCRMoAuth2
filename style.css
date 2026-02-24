@@ -67,3 +67,35 @@ body {
     padding: 10px 20px;
     margin-bottom: 5px;
 }
+
+.form-container {
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+.form-container input {
+    width: 30%;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+
+.form-container div {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    align-items: center;
+    column-gap: 10px;
+}
+
+.form-container div label {
+    text-align: right;
+    font-weight: 500;
+    color: #444;
+}
+
+.form-container div input {
+    width: 70%;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
