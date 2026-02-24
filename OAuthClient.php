@@ -228,4 +228,56 @@ class OAuthClient
             unlink($file);
         }
     }
+
+    // Функция получения пользовательских полей контактов
+    public function getContactFields(): array
+    {
+        $domain = $this->config['baseDomain'];
+        $token = $this->getAccessToken();
+
+        $url = "https://{$domain}/api/v4/contacts/custom_fields";
+
+        $response = $this->sendRequest('GET', $url, [], ["Authorization: Bearer {$token}"]);
+
+        return $response['_embedded']['custom_fields'] ?? [];
+    }
+
+    // Функция получения пользовательских полей сделок
+    public function getLeadFields(): array
+    {
+        $domain = $this->config['baseDomain'];
+        $token = $this->getAccessToken();
+
+        $url = "https://{$domain}/api/v4/leads/custom_fields";
+
+        $response = $this->sendRequest('GET', $url, [], ["Authorization: Bearer {$token}"]);
+
+        return $response['_embedded']['custom_fields'] ?? [];
+    }
+
+    // Функция получения списка контактов
+    public function getContacts(int $limit = 50, int $page = 1): array
+    {
+        $domain = $this->config['baseDomain'];
+        $token  = $this->getAccessToken();
+
+        $url = "https://{$domain}/api/v4/contacts?page={$page}&limit={$limit}";
+
+        $response = $this->sendRequest('GET', $url, [], ["Authorization: Bearer {$token}"]);
+
+        return $response['_embedded']['contacts'] ?? [];
+    }
+
+    // Функция получения списка сделок
+    public function getLeads(int $limit = 50, int $page = 1): array
+    {
+        $domain = $this->config['baseDomain'];
+        $token  = $this->getAccessToken();
+
+        $url = "https://{$domain}/api/v4/leads?page={$page}&limit={$limit}";
+
+        $response = $this->sendRequest('GET', $url, [], ["Authorization: Bearer {$token}"]);
+
+        return $response['_embedded']['leads'] ?? [];
+    }
 }
