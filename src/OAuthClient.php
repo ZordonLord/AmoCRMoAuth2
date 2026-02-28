@@ -114,7 +114,7 @@ class OAuthClient
     }
 
     // Функция обмена кода авторизации на токены доступа
-    public function exchangeCodeForTokens(string $code): array
+    public function exchangeCodeForTokens(string $code, int $attempts = 2): array
     {
         $url = "https://{$this->config['baseDomain']}/oauth2/access_token";
 
@@ -129,8 +129,18 @@ class OAuthClient
         $response = $this->sendRequest('POST', $url, $payload);
 
         if (!$this->isValidTokenResponse($response)) {
-            log_error('Invalid token response', $response);
-            throw new Exception('Некорректный ответ OAuth');
+
+            log_error('Invalid token response', [
+                'attempts_left' => $attempts,
+                'response' => $response
+            ]);
+
+            if ($attempts > 0) {
+                sleep(1);
+                return $this->exchangeCodeForTokens($code, $attempts - 1);
+            }
+
+            throw new Exception('Некорректный ответ OAuth при авторизации');
         }
 
         $response['createdAt'] = time();
@@ -164,7 +174,7 @@ class OAuthClient
     }
 
     // Функция обновления токена доступа (запрос нового)
-    public function refreshToken(array $tokens): array
+    public function refreshToken(array $tokens, int $attempts = 2): array
     {
         $url = "https://{$this->config['baseDomain']}/oauth2/access_token";
 
@@ -179,8 +189,18 @@ class OAuthClient
         $response = $this->sendRequest('POST', $url, $payload);
 
         if (!$this->isValidTokenResponse($response)) {
-            log_error('Invalid token response', $response);
-            throw new Exception('Некорректный ответ OAuth');
+
+            log_error('Invalid refresh token response', [
+                'attempts_left' => $attempts,
+                'response' => $response
+            ]);
+
+            if ($attempts > 0) {
+                sleep(1);
+                return $this->refreshToken($tokens, $attempts - 1);
+            }
+
+            throw new Exception('Некорректный ответ OAuth при обновлении токена');
         }
 
         $response['createdAt'] = time();
