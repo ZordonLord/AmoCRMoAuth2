@@ -95,6 +95,24 @@ class OAuthClient
         return $decoded;
     }
 
+    // Функция проверки валидности ответа с токенами
+    private function isValidTokenResponse(array $data): bool
+    {
+        return
+            isset($data['access_token']) &&
+            isset($data['refresh_token']) &&
+            isset($data['expires_in']) &&
+            isset($data['token_type']) &&
+
+            is_string($data['access_token']) &&
+            is_string($data['refresh_token']) &&
+            is_numeric($data['expires_in']) &&
+            is_string($data['token_type']) &&
+
+            $data['token_type'] === 'Bearer' &&
+            (int)$data['expires_in'] > 0;
+    }
+
     // Функция обмена кода авторизации на токены доступа
     public function exchangeCodeForTokens(string $code): array
     {
@@ -109,6 +127,11 @@ class OAuthClient
         ];
 
         $response = $this->sendRequest('POST', $url, $payload);
+
+        if (!$this->isValidTokenResponse($response)) {
+            log_error('Invalid token response', $response);
+            throw new Exception('Некорректный ответ OAuth');
+        }
 
         $response['createdAt'] = time();
 
@@ -154,6 +177,11 @@ class OAuthClient
         ];
 
         $response = $this->sendRequest('POST', $url, $payload);
+
+        if (!$this->isValidTokenResponse($response)) {
+            log_error('Invalid token response', $response);
+            throw new Exception('Некорректный ответ OAuth');
+        }
 
         $response['createdAt'] = time();
 
@@ -291,4 +319,3 @@ class OAuthClient
         return $this->sendRequest('POST', $url, [$contact], ["Authorization: Bearer {$token}"]);
     }
 }
-
