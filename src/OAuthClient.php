@@ -33,7 +33,17 @@ class OAuthClient
         }
     }
 
-    // Функция отправки HTTP-запросов с помощью cURL
+    /**
+     * Функция отправки HTTP-запросов с помощью cURL
+     *
+     * @param string $method - HTTP-метод (GET, POST и т.д.)
+     * @param string $url - URL для запроса
+     * @param array $data - данные для отправки
+     * @param array $headers - дополнительные заголовки для запроса
+     * @param integer $retry - количество попыток при неудаче (по умолчанию 1)
+     * @return array - декодированный JSON-ответ от сервера
+     * @throws Exception - при сетевых ошибках, HTTP-ошибках или некорректных ответах
+     */
     private function sendRequest(string $method, string $url, array $data = [], array $headers = [], int $retry = 1): array
     {
         $this->throttle();
@@ -95,7 +105,12 @@ class OAuthClient
         return $decoded;
     }
 
-    // Функция проверки валидности ответа с токенами
+    /**
+     * Функция проверки валидности ответа с токенами
+     *
+     * @param array $data - массив данных, полученный от сервера при запросе токенов
+     * @return boolean - true, если ответ содержит все необходимые поля и они валидны, иначе false
+     */
     private function isValidTokenResponse(array $data): bool
     {
         return
@@ -113,7 +128,14 @@ class OAuthClient
             (int)$data['expires_in'] > 0;
     }
 
-    // Функция обмена кода авторизации на токены доступа
+    /**
+     * Функция обмена кода авторизации на токены доступа
+     *
+     * @param string $code - код авторизации, полученный после успешной авторизации пользователя
+     * @param integer $attempts - количество попыток при неудаче (по умолчанию 2)
+     * @return array - массив с токенами доступа и другой информацией, полученной от сервера
+     * @throws Exception - при некорректном ответе от сервера или превышении количества попыток
+     */
     public function exchangeCodeForTokens(string $code, int $attempts = 2): array
     {
         $url = "https://{$this->config['baseDomain']}/oauth2/access_token";
@@ -148,7 +170,12 @@ class OAuthClient
         return $response;
     }
 
-    // Функция загрузки токенов из файла
+    /**
+     * Функция загрузки токенов из файла
+     *
+     * @return array - массив с токенами доступа, загруженными из файла
+     * @throws Exception - при отсутствии файла
+     */
     private function loadTokens(): array
     {
         if (!file_exists($this->tokenFile)) {
@@ -158,13 +185,23 @@ class OAuthClient
         return json_decode(file_get_contents($this->tokenFile), true);
     }
 
-    // Функция проверки срока действия токена
+    /**
+     * Функция проверки срока действия токена доступа
+     *
+     * @param array $tokens - массив с токенами доступа, содержащий поле 'createdAt' (время создания) и 'expires_in' (время жизни в секундах)
+     * @return boolean - true, если токен истёк или скоро истечёт (менее 60 секунд до истечения), иначе false
+     */
     private function isTokenExpired(array $tokens): bool
     {
         return time() >= ($tokens['createdAt'] + $tokens['expires_in'] - 60);
     }
 
-    // Функция для сохранения токенов в файл
+    /**
+     * Функция для сохранения токенов
+     *
+     * @param array $tokens - массив с токенами доступа, который нужно сохранить
+     * @return void
+     */
     function saveTokens(array $tokens): void
     {
         file_put_contents(
@@ -173,7 +210,14 @@ class OAuthClient
         );
     }
 
-    // Функция обновления токена доступа (запрос нового)
+    /**
+     * Функция обновления токена доступа (запрос нового)
+     *
+     * @param array $tokens - массив с текущими токенами доступа, содержащий поле 'refresh_token' для обновления
+     * @param integer $attempts - количество попыток при неудаче (по умолчанию 2)
+     * @return array - массив с новыми токенами доступа, полученными от сервера
+     * @throws Exception - при некорректном ответе от сервера или превышении количества попыток
+     */
     public function refreshToken(array $tokens, int $attempts = 2): array
     {
         $url = "https://{$this->config['baseDomain']}/oauth2/access_token";
@@ -208,7 +252,11 @@ class OAuthClient
         return $response;
     }
 
-    // Функция получения валидных токенов (обновляет при необходимости)
+    /**
+     * Функция получения валидных токенов (обновляет при необходимости)
+     *
+     * @return array - массив с валидными токенами доступа, обновлёнными при необходимости
+     */
     private function getValidTokens(): array
     {
         $tokens = $this->loadTokens();
@@ -221,13 +269,21 @@ class OAuthClient
         return $tokens;
     }
 
-    // Функция получения актуального токена доступа
+    /**
+     * Функция получения актуального токена доступа
+     *
+     * @return string - валидный токен доступа для использования в API-запросах
+     */
     public function getAccessToken(): string
     {
         return $this->getValidTokens()['access_token'];
     }
 
-    // Функция для принудительного обновления токена
+    /**
+     * Функция для принудительного обновления токена доступа (без проверки срока действия)
+     *
+     * @return array - массив с новыми токенами доступа, полученными от сервера после принудительного обновления
+     */
     public function forceRefreshToken(): array
     {
         $tokens = $this->loadTokens();
@@ -237,7 +293,11 @@ class OAuthClient
         return $tokens;
     }
 
-    // Функция получения информации об аккаунте с помощью API amoCRM
+    /**
+     * Функция получения информации об аккаунте с помощью API
+     *
+     * @return array - массив с информацией об аккаунте, полученной от сервера
+     */
     public function getAccountInfo(): array
     {
         $accessToken = $this->getAccessToken();
@@ -246,7 +306,11 @@ class OAuthClient
         return $this->sendRequest('GET', $url, [], ["Authorization: Bearer {$accessToken}"]);
     }
 
-    // Функция проверки, авторизован ли пользователь (наличие и валидность токенов)
+    /**
+     * Функция проверки, авторизован ли пользователь (наличие и валидность токенов)
+     *
+     * @return boolean - true, если пользователь авторизован (токены есть), иначе false
+     */
     public function isAuthorized(): bool
     {
         try {
@@ -257,7 +321,11 @@ class OAuthClient
         }
     }
 
-    // Функция для рендеринга кнопки авторизации/выхода
+    /**
+     * Функция для рендеринга кнопки авторизации/выхода
+     *
+     * @return string - HTML-код кнопки авторизации/выхода, который можно вставить на страницу
+     */
     public function renderAuthButton(): string
     {
         $isAuthorized = $this->isAuthorized();
@@ -268,7 +336,11 @@ class OAuthClient
         return ob_get_clean();
     }
 
-    // Функция для удаления токенов при выходе
+    /**
+     * Функция для удаления токенов при выходе из аккаунта
+     *
+     * @return void
+     */
     public function logout(): void
     {
         if (file_exists($this->tokenFile)) {
@@ -276,7 +348,11 @@ class OAuthClient
         }
     }
 
-    // Функция получения пользовательских полей контактов
+    /**
+     * Функция получения пользовательских полей контактов
+     *
+     * @return array - массив с пользовательскими полями контактов, полученными от сервера
+     */
     public function getContactFields(): array
     {
         $domain = $this->config['baseDomain'];
@@ -289,7 +365,11 @@ class OAuthClient
         return $response['_embedded']['custom_fields'] ?? [];
     }
 
-    // Функция получения пользовательских полей сделок
+    /**
+     * Функция получения пользовательских полей сделок
+     *
+     * @return array - массив с пользовательскими полями сделок, полученными от сервера
+     */
     public function getLeadFields(): array
     {
         $domain = $this->config['baseDomain'];
@@ -302,7 +382,13 @@ class OAuthClient
         return $response['_embedded']['custom_fields'] ?? [];
     }
 
-    // Функция получения списка контактов
+    /**
+     * Функция получения списка контактов
+     *
+     * @param integer $limit - количество контактов для получения (по умолчанию 50)
+     * @param integer $page - номер страницы для получения (по умолчанию 1)
+     * @return array - массив с контактами, полученными от сервера, или пустой массив, если контактов нет
+     */
     public function getContacts(int $limit = 50, int $page = 1): array
     {
         $domain = $this->config['baseDomain'];
@@ -315,7 +401,13 @@ class OAuthClient
         return $response['_embedded']['contacts'] ?? [];
     }
 
-    // Функция получения списка сделок
+    /**
+     * Функция получения списка сделок
+     *
+     * @param integer $limit - количество сделок для получения (по умолчанию 50)
+     * @param integer $page - номер страницы для получения (по умолчанию 1)
+     * @return array - массив со сделками, полученными от сервера, или пустой массив, если сделок нет
+     */
     public function getLeads(int $limit = 50, int $page = 1): array
     {
         $domain = $this->config['baseDomain'];
@@ -328,7 +420,12 @@ class OAuthClient
         return $response['_embedded']['leads'] ?? [];
     }
 
-    // Функция для добавления нового контакта
+    /**
+     * Функция для добавления нового контакта
+     *
+     * @param array $contact - массив с данными нового контакта, который нужно добавить
+     * @return array - массив с данными добавленного контакта, полученными от сервера, или пустой массив при ошибке
+     */
     public function addContact(array $contact): array
     {
         $domain = $this->config['baseDomain'];
