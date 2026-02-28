@@ -34,24 +34,32 @@ class OAuthClient
     }
 
     /**
-     * Функция отправки HTTP-запросов с помощью cURL
+     * Функция отправки HTTP-запроса с помощью cURL
      *
-     * @param string $method - HTTP-метод (GET, POST и т.д.)
-     * @param string $url - URL для запроса
-     * @param array $data - данные для отправки
+     * @param string $method - HTTP метод (GET, POST, PATCH, DELETE)
+     * @param string $url - полный URL запроса
+     * @param array $data - тело запроса (будет преобразовано в JSON)
      * @param array $headers - дополнительные заголовки для запроса
-     * @param integer $retry - количество попыток при неудаче (по умолчанию 1)
-     * @return array - декодированный JSON-ответ от сервера
-     * @throws Exception - при сетевых ошибках, HTTP-ошибках или некорректных ответах
+     * @param bool $withAuth добавлять ли Authorization
+     * @param int $retry количество повторов при ошибках
+     *
+     * @return array декодированный JSON-ответ
+     * @throws Exception при ошибке сети, HTTP или JSON
      */
-    private function sendRequest(string $method, string $url, array $data = [], array $headers = [], int $retry = 1): array
+    private function sendRequest(string $method, string $url, array $data = [], array $headers = [], bool $withAuth = true, int $retry = 1): array
     {
         $this->throttle();
 
-        $ch = curl_init($url);
-
         $defaultHeaders = ['Content-Type: application/json'];
+
+        if ($withAuth) {
+            $defaultHeaders[] = "Authorization: Bearer {$this->getAccessToken()}";
+        }
+
+        $originalHeaders = $headers;
         $headers = array_merge($defaultHeaders, $headers);
+
+        $ch = curl_init($url);
 
         $options = [
             CURLOPT_RETURNTRANSFER => true,
@@ -62,7 +70,14 @@ class OAuthClient
         ];
 
         if (!empty($data)) {
-            $options[CURLOPT_POSTFIELDS] = json_encode($data);
+            $jsonData = json_encode($data);
+
+            if ($jsonData === false) {
+                log_error('JSON encode error: ' . json_last_error_msg(), ['data' => $data]);
+                throw new Exception('JSON encode error: ' . json_last_error_msg());
+            }
+
+            $options[CURLOPT_POSTFIELDS] = $jsonData;
         }
 
         curl_setopt_array($ch, $options);
@@ -73,17 +88,37 @@ class OAuthClient
             $error = curl_error($ch);
             curl_close($ch);
 
-            log_error('Network error', ['error' => $error]);
+            log_error('Network error', [
+                'error' => $error,
+                'url' => $url
+            ]);
+
             throw new Exception("Network error: $error");
         }
 
         $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
+        // автообновление токена при 401
+        if ($http === 401 && $withAuth && $retry > 0) {
+            try {
+                $this->forceRefreshToken(); // пробуем обновить
+                return $this->sendRequest($method, $url, $data, $originalHeaders, true, $retry - 1);
+            } catch (Exception $e) {
+                // если refresh не удался, удаляем токены и просим авторизоваться заново
+                $this->logout();
+                log_error('Unauthorized after token refresh', [
+                    'error' => $e->getMessage(),
+                    'url' => $url
+                ]);
+                throw new Exception('Требуется повторная авторизация');
+            }
+        }
+
         // retry при лимите или ошибке сервера
         if (($http === 429 || $http >= 500) && $retry > 0) {
             sleep(1);
-            return $this->sendRequest($method, $url, $data, $headers, $retry - 1);
+            return $this->sendRequest($method, $url, $data, $originalHeaders, $withAuth, $retry - 1);
         }
 
         if ($http !== 200) {
@@ -148,7 +183,7 @@ class OAuthClient
             'redirect_uri'  => $this->config['redirectUri']
         ];
 
-        $response = $this->sendRequest('POST', $url, $payload);
+        $response = $this->sendRequest('POST', $url, $payload, [], false);
 
         if (!$this->isValidTokenResponse($response)) {
 
@@ -230,7 +265,7 @@ class OAuthClient
             'redirect_uri'  => $this->config['redirectUri']
         ];
 
-        $response = $this->sendRequest('POST', $url, $payload);
+        $response = $this->sendRequest('POST', $url, $payload, [], false);
 
         if (!$this->isValidTokenResponse($response)) {
 
@@ -300,10 +335,9 @@ class OAuthClient
      */
     public function getAccountInfo(): array
     {
-        $accessToken = $this->getAccessToken();
         $url = "https://{$this->config['baseDomain']}/api/v4/account";
 
-        return $this->sendRequest('GET', $url, [], ["Authorization: Bearer {$accessToken}"]);
+        return $this->sendRequest('GET', $url);
     }
 
     /**
@@ -356,11 +390,10 @@ class OAuthClient
     public function getContactFields(): array
     {
         $domain = $this->config['baseDomain'];
-        $token = $this->getAccessToken();
 
         $url = "https://{$domain}/api/v4/contacts/custom_fields";
 
-        $response = $this->sendRequest('GET', $url, [], ["Authorization: Bearer {$token}"]);
+        $response = $this->sendRequest('GET', $url);
 
         return $response['_embedded']['custom_fields'] ?? [];
     }
@@ -373,11 +406,10 @@ class OAuthClient
     public function getLeadFields(): array
     {
         $domain = $this->config['baseDomain'];
-        $token = $this->getAccessToken();
 
         $url = "https://{$domain}/api/v4/leads/custom_fields";
 
-        $response = $this->sendRequest('GET', $url, [], ["Authorization: Bearer {$token}"]);
+        $response = $this->sendRequest('GET', $url);
 
         return $response['_embedded']['custom_fields'] ?? [];
     }
@@ -392,11 +424,10 @@ class OAuthClient
     public function getContacts(int $limit = 50, int $page = 1): array
     {
         $domain = $this->config['baseDomain'];
-        $token  = $this->getAccessToken();
 
         $url = "https://{$domain}/api/v4/contacts?page={$page}&limit={$limit}";
 
-        $response = $this->sendRequest('GET', $url, [], ["Authorization: Bearer {$token}"]);
+        $response = $this->sendRequest('GET', $url);
 
         return $response['_embedded']['contacts'] ?? [];
     }
@@ -411,11 +442,10 @@ class OAuthClient
     public function getLeads(int $limit = 50, int $page = 1): array
     {
         $domain = $this->config['baseDomain'];
-        $token  = $this->getAccessToken();
 
         $url = "https://{$domain}/api/v4/leads?page={$page}&limit={$limit}";
 
-        $response = $this->sendRequest('GET', $url, [], ["Authorization: Bearer {$token}"]);
+        $response = $this->sendRequest('GET', $url);
 
         return $response['_embedded']['leads'] ?? [];
     }
@@ -429,10 +459,9 @@ class OAuthClient
     public function addContact(array $contact): array
     {
         $domain = $this->config['baseDomain'];
-        $token  = $this->getAccessToken();
 
         $url = "https://{$domain}/api/v4/contacts";
 
-        return $this->sendRequest('POST', $url, [$contact], ["Authorization: Bearer {$token}"]);
+        return $this->sendRequest('POST', $url, [$contact]);
     }
 }
