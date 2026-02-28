@@ -1,6 +1,6 @@
 <?php
 
-$app = require __DIR__ . '/bootstrap.php';
+$app = require __DIR__ . '/../bootstrap.php';
 $client = $app['client'];
 
 $action = $_POST['action'] ?? null; // Получаем действие из POST-запроса

@@ -1,6 +1,6 @@
 <?php
 
-$app = require __DIR__ . '/bootstrap.php';
+$app = require __DIR__ . '/../bootstrap.php';
 $client = $app['client'];
 $isAuthorized = $client->isAuthorized();
 
@@ -183,51 +183,6 @@ if ($isAuthorized) {
                     </ul>
                 <?php else: ?>
                     <p>Контакты не найдены</p>
-                <?php endif; ?>
-            </div>
-
-            <!-- Форма для создания контакта -->
-            <div class="form-container">
-                <h2>Создать контакт</h2>
-
-                <form method="POST">
-
-                    <h3>Основные поля</h3>
-
-                    <input type="text" name="first_name" placeholder="Имя" required>
-                    <input type="text" name="last_name" placeholder="Фамилия">
-
-                    <h3>Дополнительные поля</h3>
-
-                    <?php foreach ($contactFields as $field): ?>
-                        <div>
-                            <label><?= htmlspecialchars($field['name']) ?></label>
-                            <input type="text" name="cf_<?= $field['id'] ?>">
-                        </div>
-                    <?php endforeach; ?>
-                    <br>
-                    <button type="submit" class="btn" name="create_contact">
-                        Добавить контакт
-                    </button>
-                </form>
-            </div>
-
-            <!-- Показываем список сделок -->
-            <div class="list-container">
-                <h3>Список сделок</h3>
-
-                <?php if (!empty($leads)): ?>
-                    <ul>
-                        <?php foreach ($leads as $lead): ?>
-                            <li>
-                                <b><?= e($lead['name'] ?? 'Без названия') ?></b>
-                                (ID: <?= e($lead['id']) ?>,
-                                Цена: <?= e($lead['price'] ?? 0) ?>)
-                            </li>
-                        <?php endforeach; ?>
-                    </ul>
-                <?php else: ?>
-                    <p>Сделки не найдены</p>
                 <?php endif; ?>
             </div>
         <?php else: ?>

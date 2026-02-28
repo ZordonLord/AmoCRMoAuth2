@@ -1,8 +1,8 @@
 <?php
 
-require_once __DIR__ . '/OAuthClient.php';
-require_once __DIR__ . '/logger.php';
-$config = require __DIR__ . '/config.php';
+require_once __DIR__ . '/src/OAuthClient.php';
+require_once __DIR__ . '/src/logger.php';
+$config = require __DIR__ . '/config/config.php';
 
 // Создаём и получаем экземпляр OAuthClient / config / storageFile
 return [

@@ -2,7 +2,7 @@
 // Функция для логирования ошибок в файл storage/error.log
 function log_error(string $message, array $context = []): void
 {
-    $file = __DIR__ . '/storage/error.log';
+    $file = __DIR__ . '/../storage/error.log';
 
     $time = date('Y-m-d H:i:s');
 
@@ -14,3 +14,4 @@ function log_error(string $message, array $context = []): void
 
     file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
 }
+

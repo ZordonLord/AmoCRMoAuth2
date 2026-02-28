@@ -116,7 +116,7 @@ class OAuthClient
     // Функция загрузки токенов из файла
     private function loadTokens(): array
     {
-        $file = __DIR__ . '/storage/tokens.json';
+        $file = __DIR__ . '/../storage/tokens.json';
 
         if (!file_exists($file)) {
             throw new Exception("Токены не найдены. Авторизуйтесь.");
@@ -135,7 +135,7 @@ class OAuthClient
     function saveTokens(array $tokens): void
     {
         file_put_contents(
-            __DIR__ . '/storage/tokens.json',
+            __DIR__ . '/../storage/tokens.json',
             json_encode($tokens, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
         );
     }
@@ -216,14 +216,14 @@ class OAuthClient
         $clientId = $this->config['clientId'];
 
         ob_start();
-        require __DIR__ . '/views/auth_button.php';
+        require __DIR__ . '/../views/auth_button.php';
         return ob_get_clean();
     }
 
     // Функция для удаления токенов при выходе
     public function logout(): void
     {
-        $file = __DIR__ . '/storage/tokens.json';
+        $file = __DIR__ . '/../storage/tokens.json';
         if (file_exists($file)) {
             unlink($file);
         }
@@ -292,3 +292,4 @@ class OAuthClient
         return $this->sendRequest('POST', $url, [$contact], ["Authorization: Bearer {$token}"]);
     }
 }
+
