@@ -3,12 +3,14 @@
 class OAuthClient
 {
     private array $config;
+    private string $tokenFile;
     private int $requestsInCurrentSecond = 0; // счётчик запросов для троттлинга
     private int $currentSecond = 0; // текущая секунда для троттлинга
 
     public function __construct(array $config)
     {
         $this->config = $config;
+        $this->tokenFile = $config['tokenStorage'];
     }
 
     // Функция для троттлинга запросов (не более 7 запросов в секунду)
@@ -116,13 +118,11 @@ class OAuthClient
     // Функция загрузки токенов из файла
     private function loadTokens(): array
     {
-        $file = __DIR__ . '/../storage/tokens.json';
-
-        if (!file_exists($file)) {
+        if (!file_exists($this->tokenFile)) {
             throw new Exception("Токены не найдены. Авторизуйтесь.");
         }
 
-        return json_decode(file_get_contents($file), true);
+        return json_decode(file_get_contents($this->tokenFile), true);
     }
 
     // Функция проверки срока действия токена
@@ -135,7 +135,7 @@ class OAuthClient
     function saveTokens(array $tokens): void
     {
         file_put_contents(
-            __DIR__ . '/../storage/tokens.json',
+            $this->tokenFile,
             json_encode($tokens, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
         );
     }
@@ -223,9 +223,8 @@ class OAuthClient
     // Функция для удаления токенов при выходе
     public function logout(): void
     {
-        $file = __DIR__ . '/../storage/tokens.json';
-        if (file_exists($file)) {
-            unlink($file);
+        if (file_exists($this->tokenFile)) {
+            unlink($this->tokenFile);
         }
     }
 

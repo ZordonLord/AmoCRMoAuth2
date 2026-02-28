@@ -9,5 +9,6 @@ return [
     'clientSecret' => $_ENV['AMO_CLIENT_SECRET'],
     'redirectUri'  => $_ENV['AMO_REDIRECT_URI'],
     'baseDomain'   => $_ENV['AMO_BASE_DOMAIN'],
+    'tokenStorage' => __DIR__ . '/../storage/tokens.json',
 ];
 
