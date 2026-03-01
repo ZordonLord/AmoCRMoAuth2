@@ -6,6 +6,9 @@ class OAuthClient
     private string $tokenFile;
     private int $requestsInCurrentSecond = 0; // счётчик запросов для троттлинга
     private int $currentSecond = 0; // текущая секунда для троттлинга
+    private array $lastErrorResponse = []; // для хранения последнего ответа с ошибкой
+    private ?array $cachedContactFields = null; // кэш метаданных полей контактов
+    private ?array $cachedLeadFields = null; // кэш метаданных полей сделок
 
     public function __construct(array $config)
     {
@@ -31,6 +34,30 @@ class OAuthClient
 
             sleep(1);
         }
+    }
+
+    /**
+     * Функция сохранения последнего ответа с ошибкой для анализа в случае исключений
+     *
+     * @param string $raw - сырой ответ от сервера, который вызвал ошибку (обычно JSON с описанием ошибки)
+     * @return void
+     */
+    private function setLastErrorResponse(string $raw): void
+    {
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            $this->lastErrorResponse = $decoded;
+        }
+    }
+
+    /**
+     * Функция получения последнего ответа с ошибкой для анализа
+     *
+     * @return array - массив с данными последнего ответа с ошибкой, который может содержать информацию о причинах ошибки (например, validation-errors)
+     */
+    public function getLastErrorResponse(): array
+    {
+        return $this->lastErrorResponse;
     }
 
     /**
@@ -127,6 +154,7 @@ class OAuthClient
                 'response' => $raw,
                 'url' => $url
             ]);
+            $this->setLastErrorResponse($raw);
             throw new Exception("HTTP error ($http)");
         }
 
@@ -415,6 +443,28 @@ class OAuthClient
     }
 
     /**
+     * Функция получения метаданных полей контактов с кэшированием (для retry при ошибках типов)
+     */
+    private function getCachedContactFields(): array
+    {
+        if ($this->cachedContactFields === null) {
+            $this->cachedContactFields = $this->getContactFields();
+        }
+        return $this->cachedContactFields;
+    }
+
+    /**
+     * Функция получения метаданных полей сделок с кэшированием (для retry при ошибках типов)
+     */
+    private function getCachedLeadFields(): array
+    {
+        if ($this->cachedLeadFields === null) {
+            $this->cachedLeadFields = $this->getLeadFields();
+        }
+        return $this->cachedLeadFields;
+    }
+
+    /**
      * Функция получения списка контактов
      *
      * @param integer $limit - количество контактов для получения (по умолчанию 50)
@@ -451,17 +501,228 @@ class OAuthClient
     }
 
     /**
-     * Функция для добавления нового контакта
+     * Функция для добавления нового контакта с автоматическим исправлением типов полей
      *
-     * @param array $contact - массив с данными нового контакта, который нужно добавить
-     * @return array - массив с данными добавленного контакта, полученными от сервера, или пустой массив при ошибке
+     * @param array $contact - данные контакта для добавления
+     * @param int $attempts - количество попыток исправления типов (по умолчанию 3)
+     *
+     * @return array - ответ сервера с добавленным контактом
+     * @throws Exception - если контакт не удаётся добавить
      */
-    public function addContact(array $contact): array
+    public function addContact(array $contact, int $attempts = 3): array
     {
-        $domain = $this->config['baseDomain'];
+        return $this->addEntityWithTypeRetry(
+            $contact,
+            "https://{$this->config['baseDomain']}/api/v4/contacts",
+            'contact',
+            'contacts',
+            $attempts
+        );
+    }
 
-        $url = "https://{$domain}/api/v4/contacts";
+    /**
+     * Функция для добавления новой сделки с автоматическим исправлением типов полей
+     *
+     * @param array $lead - данные сделки для добавления
+     * @param int $attempts - количество попыток исправления типов (по умолчанию 3)
+     *
+     * @return array - ответ сервера с добавленной сделкой
+     * @throws Exception - если сделку не удаётся добавить
+     */
+    public function addLead(array $lead, int $attempts = 3): array
+    {
+        return $this->addEntityWithTypeRetry(
+            $lead,
+            "https://{$this->config['baseDomain']}/api/v4/leads",
+            'lead',
+            'leads',
+            $attempts
+        );
+    }
 
-        return $this->sendRequest('POST', $url, [$contact]);
+    /**
+     * Добавление сущности (контакт/сделка) с retry при ошибках типов полей
+     */
+    private function addEntityWithTypeRetry(array $entity, string $url, string $entityName, string $embeddedKey, int $attempts): array
+    {
+        $attemptNum = 4 - $attempts;
+
+        try {
+            $response = $this->sendRequest('POST', $url, [$entity]);
+
+            if ($attemptNum > 1) {
+                log_error("{$entityName} успешно добавлен при попытке {$attemptNum}", [
+                    'id' => $response['_embedded'][$embeddedKey][0]['id'] ?? null
+                ]);
+            }
+
+            return $response;
+        } catch (Exception $e) {
+            $error = $this->getLastErrorResponse();
+
+            if ($attempts > 0 && $this->hasTypeValidationError($error)) {
+                try {
+                    $fieldsMeta = $entityName === 'contact' ? $this->getCachedContactFields() : $this->getCachedLeadFields();
+                } catch (Exception $metaEx) {
+                    log_error('Не удалось получить метаданные полей для исправления типов', ['error' => $metaEx->getMessage()]);
+                    throw $e;
+                }
+
+                log_error("Ошибка проверки типа при попытке {$attemptNum}, пробуем исправить...", [
+                    'attempts_left' => $attempts,
+                    'error_details' => $error['validation-errors'] ?? []
+                ]);
+
+                $fixed = $this->normalizeCustomFields($entity, $fieldsMeta, $entityName);
+                return $this->addEntityWithTypeRetry($fixed, $url, $entityName, $embeddedKey, $attempts - 1);
+            }
+
+            $logData = [
+                'error' => $e->getMessage(),
+                'validation_errors' => $error['validation-errors'] ?? null
+            ];
+            if (empty($error['validation-errors']) && !empty($error)) {
+                $logData['full_error_response'] = $error;
+            }
+            log_error("Не удалось добавить {$entityName} после {$attemptNum} попыток", $logData);
+
+            throw $e;
+        }
+    }
+
+    // Коды ошибок валидации типов полей, которые можно исправить автоматически
+    private const TYPE_VALIDATION_CODES = ['InvalidType', 'BadValue', 'InvalidValueList', 'JsonInvalidValue', 'InvalidDateFormat'];
+
+    /**
+     * Функция проверяет, содержит ли ответ ошибки валидации типов полей (исправляемые автоматически)
+     *
+     * @param array $error - массив с данными ошибки, полученный от сервера при неудачной попытке добавить контакт/сделку
+     * @return boolean
+     */
+    private function hasTypeValidationError(array $error): bool
+    {
+        if (empty($error['validation-errors'])) {
+            return false;
+        }
+
+        foreach ($error['validation-errors'] as $block) {
+            foreach ($block['errors'] ?? [] as $e) {
+                if (isset($e['code']) && in_array($e['code'], self::TYPE_VALIDATION_CODES, true)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Функция приводит значения custom_fields_values к типам из метаданных
+     *
+     * @param array $entity - массив с данными контакта или сделки, который нужно исправить (должен содержать ключ 'custom_fields_values' с массивом полей)
+     * @param array $fieldsMeta - массив с метаданными полей (должен содержать массив полей с ключами 'id' и 'type')
+     * @param string $logPrefix - префикс для логов (например, 'contact' или 'lead'), чтобы было понятно, к какому типу сущности относится лог
+     * @return array - массив с данными контакта или сделки, в котором значения в 'custom_fields_values' приведены к типам из метаданных, если это было необходимо
+     */
+    private function normalizeCustomFields(array $entity, array $fieldsMeta, string $logPrefix = 'entity'): array
+    {
+        if (empty($entity['custom_fields_values'])) {
+            return $entity;
+        }
+
+        $types = [];
+        foreach ($fieldsMeta as $field) {
+            $types[$field['id']] = $field['type'];
+        }
+
+        $fixedCount = 0;
+        foreach ($entity['custom_fields_values'] as &$field) {
+            $type = $types[$field['field_id']] ?? 'text';
+            foreach ($field['values'] as &$value) {
+                $original = $value['value'];
+                $value['value'] = $this->castValueByType($original, $type);
+                if ($value['value'] !== $original) {
+                    $fixedCount++;
+                }
+            }
+        }
+
+        if ($fixedCount > 0) {
+            log_error("Исправлено {$fixedCount} полей типа {$logPrefix}", []);
+        }
+
+        return $entity;
+    }
+
+    /**
+     * Функция для приведения значения к нужному типу в зависимости от типа поля в AmoCRM
+     *
+     * @param [type] $value - исходное значение, которое нужно привести к нужному типу (может быть строкой, числом, массивом и т.д., в зависимости от того, что пришло в запросе на добавление контакта/сделки)
+     * @param string $type - тип поля в AmoCRM (например, 'numeric', 'checkbox', 'date', 'select' и т.д.), который определяет, к какому типу нужно привести значение
+     */
+    private function castValueByType($value, string $type)
+    {
+        // Если значение пустое, возвращаем типизированное значение по умолчанию
+        if ($value === null || $value === '') {
+            switch ($type) {
+                case 'numeric':
+                case 'price':
+                case 'checkbox':
+                case 'select':
+                case 'radiobutton':
+                    return 0;
+                case 'multiselect':
+                    return [];
+                case 'date':
+                case 'date_time':
+                    return (new \DateTime())->format('Y-m-d\TH:i:sP');
+                default:
+                    return '';
+            }
+        }
+        // Приводим значение к нужному типу в зависимости от типа поля
+        switch ($type) {
+
+            case 'numeric':
+            case 'price':
+                if (is_numeric($value)) {
+                    return floatval($value);
+                }
+                preg_match('/-?\d+[\.\,]?\d*/', (string)$value, $matches);
+                return !empty($matches) ? (float)str_replace(',', '.', $matches[0]) : 0;
+
+            case 'checkbox':
+                if (is_bool($value)) return $value;
+                if (is_numeric($value)) return (int)$value !== 0;
+                return filter_var($value, FILTER_VALIDATE_BOOLEAN);
+
+            case 'date':
+            case 'date_time':
+                try {
+                    if (is_numeric($value)) {
+                        $dt = (new \DateTime())->setTimestamp((int)$value);
+                    } else {
+                        $dt = new \DateTime((string)$value);
+                    }
+                    return $dt->format('Y-m-d\TH:i:sP');
+                } catch (\Exception $e) {
+                    return (new \DateTime())->format('Y-m-d\TH:i:sP');
+                }
+
+            case 'select':
+            case 'radiobutton':
+                return (int)$value;
+
+            case 'multiselect':
+                if (is_array($value)) {
+                    return array_map(fn($v) => (int)$v, $value);
+                }
+                return [(int)$value];
+
+            case 'text':
+            case 'textarea':
+            case 'url':
+            default:
+                return (string)$value;
+        }
     }
 }

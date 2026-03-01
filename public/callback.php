@@ -77,6 +77,41 @@ if ($isAuthorized) {
             $error = $e->getMessage();
         }
     }
+
+    if (isset($_POST['create_lead'])) {
+        $lead = [
+            'name' => $_POST['lead_name'] ?? '',
+        ];
+
+        $fields = $client->getLeadFields();
+        $customFields = [];
+
+        foreach ($fields as $field) {
+            $fieldId = $field['id'];
+            $inputName = "lf_{$fieldId}";
+
+            if (!empty($_POST[$inputName])) {
+                $customFields[] = [
+                    'field_id' => $fieldId,
+                    'values' => [
+                        ['value' => $_POST[$inputName]]
+                    ]
+                ];
+            }
+        }
+
+        if (!empty($customFields)) {
+            $lead['custom_fields_values'] = $customFields;
+        }
+
+        try {
+            $result = $client->addLead($lead);
+            header("Location: callback.php");
+            exit;
+        } catch (Exception $e) {
+            $error = $e->getMessage();
+        }
+    }
 }
 
 ?>
@@ -130,44 +165,6 @@ if ($isAuthorized) {
                 <pre class="tokenBox"><?= e(print_r($tokens, true)) ?></pre>
             <?php endif; ?>
 
-            <!-- Показываем поля контактов -->
-            <div class="list-container">
-                <h3>Поля контактов</h3>
-
-                <?php if (!empty($contactFields)): ?>
-                    <ul>
-                        <?php foreach ($contactFields as $field): ?>
-                            <li>
-                                <b><?= e($field['name']) ?></b>
-                                (ID: <?= e($field['id']) ?>,
-                                Тип: <?= e($field['type']) ?>)
-                            </li>
-                        <?php endforeach; ?>
-                    </ul>
-                <?php else: ?>
-                    <p>Поля контактов не найдены</p>
-                <?php endif; ?>
-            </div>
-
-            <!-- Показываем поля сделок -->
-            <div class="list-container">
-                <h3>Поля сделок</h3>
-
-                <?php if (!empty($leadFields)): ?>
-                    <ul>
-                        <?php foreach ($leadFields as $field): ?>
-                            <li>
-                                <b><?= e($field['name']) ?></b>
-                                (ID: <?= e($field['id']) ?>,
-                                Тип: <?= e($field['type']) ?>)
-                            </li>
-                        <?php endforeach; ?>
-                    </ul>
-                <?php else: ?>
-                    <p>Поля сделок не найдены</p>
-                <?php endif; ?>
-            </div>
-
             <!-- Показываем список контактов -->
             <div class="list-container">
                 <h3>Список контактов</h3>
@@ -185,6 +182,68 @@ if ($isAuthorized) {
                     <p>Контакты не найдены</p>
                 <?php endif; ?>
             </div>
+
+            <!-- Форма для создания контакта -->
+            <h2>Создать контакт</h2>
+
+            <form method="POST" class="form-container">
+
+                <h3>Основные поля</h3>
+
+                <input type="text" name="first_name" placeholder="Имя" required>
+                <input type="text" name="last_name" placeholder="Фамилия">
+
+                <h3>Дополнительные поля</h3>
+
+                <?php foreach ($contactFields as $field): ?>
+                    <div>
+                        <label><?= htmlspecialchars($field['name']) ?></label>
+                        <input type="text" name="cf_<?= $field['id'] ?>">
+                    </div>
+                <?php endforeach; ?>
+                <br>
+                <button type="submit" name="create_contact" class="btn">
+                    Добавить контакт
+                </button>
+            </form>
+
+            <!-- Показываем список сделок -->
+            <div class="list-container">
+                <h3>Список сделок</h3>
+
+                <?php if (!empty($leads)): ?>
+                    <ul>
+                        <?php foreach ($leads as $lead): ?>
+                            <li>
+                                <b><?= e($lead['name'] ?? 'Без имени') ?></b>
+                                (ID: <?= e($lead['id']) ?>)
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php else: ?>
+                    <p>Сделки не найдены</p>
+                <?php endif; ?>
+            </div>
+
+            <!-- Форма для создания сделки -->
+            <h2>Создать сделку</h2>
+
+            <form method="POST" class="form-container">
+                <h3>Основные поля</h3>
+                <input type="text" name="lead_name" placeholder="Название сделки" required>
+
+                <h3>Дополнительные поля</h3>
+                <?php foreach ($leadFields as $field): ?>
+                    <div>
+                        <label><?= htmlspecialchars($field['name']) ?></label>
+                        <input type="text" name="lf_<?= $field['id'] ?>">
+                    </div>
+                <?php endforeach; ?>
+                <br>
+                <button type="submit" name="create_lead" class="btn">
+                    Добавить сделку
+                </button>
+            </form>
         <?php else: ?>
             <!-- Если пользователь не авторизован, показываем кнопку для входа и сообщение -->
             <h3>Авторизация не выполнена</h3>
