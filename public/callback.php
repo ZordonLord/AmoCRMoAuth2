@@ -20,16 +20,6 @@ if ($isAuthorized) {
         $error = $e->getMessage();
     }
 
-    // Получаем поля контактов и сделок
-    try {
-        $contactFields = $client->getContactFields();
-        $leadFields = $client->getLeadFields();
-    } catch (Exception $e) {
-        $error = $e->getMessage();
-        $contactFields = [];
-        $leadFields = [];
-    }
-
     // Получаем список контактов и сделок
     try {
         $contacts = $client->getContacts();
@@ -40,76 +30,85 @@ if ($isAuthorized) {
         $leads = [];
     }
 
+    // Создаём контакт при отправке формы
     if (isset($_POST['create_contact'])) {
 
         $contact = [
-            'first_name' => $_POST['first_name'] ?? '',
-            'last_name'  => $_POST['last_name'] ?? '',
+            'name' => $_POST['contact_name'] ?? 'Без имени',
+            'custom_fields_values' => []
         ];
 
-        $fields = $client->getContactFields();
-        $customFields = [];
+        foreach ($_POST as $key => $value) {
 
-        foreach ($fields as $field) {
-            $fieldId = $field['id'];
-            $inputName = "cf_{$fieldId}";
+            if ($key === 'contact_name') {
+                continue;
+            }
 
-            if (!empty($_POST[$inputName])) {
-                $customFields[] = [
-                    'field_id' => $fieldId,
+            if (is_numeric($key) && $value !== '' && $value !== null) {
+
+                $contact['custom_fields_values'][] = [
+                    'field_id' => (int)$key,
                     'values' => [
-                        ['value' => $_POST[$inputName]]
+                        [
+                            'value' => (string)$value
+                        ]
                     ]
                 ];
             }
         }
 
-        if (!empty($customFields)) {
-            $contact['custom_fields_values'] = $customFields;
+        if (empty($contact['custom_fields_values'])) {
+            unset($contact['custom_fields_values']);
         }
 
         try {
-            $result = $client->addContact($contact);
+            $response = $client->addContact($contact);
 
             header("Location: callback.php");
             exit;
         } catch (Exception $e) {
-            $error = $e->getMessage();
+            echo "Ошибка создания контакта: " . $e->getMessage();
         }
     }
 
+    // Создаём сделку при отправке формы
     if (isset($_POST['create_lead'])) {
+
         $lead = [
-            'name' => $_POST['lead_name'] ?? '',
+            'name' => $_POST['lead_name'] ?? 'Новая сделка',
+            'custom_fields_values' => []
         ];
 
-        $fields = $client->getLeadFields();
-        $customFields = [];
+        foreach ($_POST as $key => $value) {
 
-        foreach ($fields as $field) {
-            $fieldId = $field['id'];
-            $inputName = "lf_{$fieldId}";
+            if ($key === 'lead_name') {
+                continue;
+            }
 
-            if (!empty($_POST[$inputName])) {
-                $customFields[] = [
-                    'field_id' => $fieldId,
+            if (is_numeric($key) && $value !== '' && $value !== null) {
+
+                $lead['custom_fields_values'][] = [
+                    'field_id' => (int)$key,
                     'values' => [
-                        ['value' => $_POST[$inputName]]
+                        [
+                            'value' => (string)$value
+                        ]
                     ]
                 ];
             }
         }
 
-        if (!empty($customFields)) {
-            $lead['custom_fields_values'] = $customFields;
+        if (empty($lead['custom_fields_values'])) {
+            unset($lead['custom_fields_values']);
         }
 
         try {
-            $result = $client->addLead($lead);
+            $response = $client->addLead($lead);
+
             header("Location: callback.php");
             exit;
         } catch (Exception $e) {
-            $error = $e->getMessage();
+            echo "Ошибка создания сделки: " . $e->getMessage();
         }
     }
 }
@@ -187,21 +186,20 @@ if ($isAuthorized) {
             <h2>Создать контакт</h2>
 
             <form method="POST" class="form-container">
-
-                <h3>Основные поля</h3>
-
-                <input type="text" name="first_name" placeholder="Имя" required>
-                <input type="text" name="last_name" placeholder="Фамилия">
-
-                <h3>Дополнительные поля</h3>
-
-                <?php foreach ($contactFields as $field): ?>
-                    <div>
-                        <label><?= htmlspecialchars($field['name']) ?></label>
-                        <input type="text" name="cf_<?= $field['id'] ?>">
-                    </div>
-                <?php endforeach; ?>
+                <input type="text" name="contact_name" placeholder="Имя контакта" required="">
+                <br><br>
+                <input type="text" name="1343053" placeholder="Текст">
                 <br>
+                <input type="text" name="1343055" placeholder="Число">
+                <br>
+                <input type="text" name="1343059" placeholder="Дата">
+                <br>
+                <input type="text" name="1343061" placeholder="Ссылка">
+                <br>
+                <input type="text" name="1343063" placeholder="Текстовая область">
+                <br>
+                <input type="text" name="1343071" placeholder="Дата и время">
+                <br><br>
                 <button type="submit" name="create_contact" class="btn">
                     Добавить контакт
                 </button>
@@ -229,21 +227,25 @@ if ($isAuthorized) {
             <h2>Создать сделку</h2>
 
             <form method="POST" class="form-container">
-                <h3>Основные поля</h3>
-                <input type="text" name="lead_name" placeholder="Название сделки" required>
-
-                <h3>Дополнительные поля</h3>
-                <?php foreach ($leadFields as $field): ?>
-                    <div>
-                        <label><?= htmlspecialchars($field['name']) ?></label>
-                        <input type="text" name="lf_<?= $field['id'] ?>">
-                    </div>
-                <?php endforeach; ?>
+                <input type="text" name="lead_name" placeholder="Название сделки" required="">
+                <br><br>
+                <input type="text" name="1343075" placeholder="Текст">
                 <br>
+                <input type="text" name="1343077" placeholder="Число">
+                <br>
+                <input type="text" name="1343081Э" placeholder="Дата">
+                <br>
+                <input type="text" name="1343083" placeholder="Ссылка">
+                <br>
+                <input type="text" name="1343085" placeholder="Текстовая область">
+                <br>
+                <input type="text" name="1343093" placeholder="Дата и время">
+                <br><br>
                 <button type="submit" name="create_lead" class="btn">
                     Добавить сделку
                 </button>
             </form>
+
         <?php else: ?>
             <!-- Если пользователь не авторизован, показываем кнопку для входа и сообщение -->
             <h3>Авторизация не выполнена</h3>
