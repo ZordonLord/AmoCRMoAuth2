@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/HttpException.php';
 
 class OAuthClient
 {
@@ -149,13 +150,14 @@ class OAuthClient
         }
 
         if ($http !== 200) {
-            log_error('HTTP error', [
-                'status' => $http,
-                'response' => $raw,
-                'url' => $url
-            ]);
+            logHttpError(
+                'HTTP error',
+                $http,
+                $raw,
+                ['url' => $url]
+            );
             $this->setLastErrorResponse($raw);
-            throw new Exception("HTTP error ($http)");
+            throw new HttpException($http, $raw);
         }
 
         $decoded = json_decode($raw, true);
