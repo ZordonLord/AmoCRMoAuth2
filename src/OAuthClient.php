@@ -36,20 +36,6 @@ class OAuthClient
     }
 
     /**
-     * Функция сохранения последнего ответа с ошибкой для анализа в случае исключений
-     *
-     * @param string $raw - сырой ответ от сервера, который вызвал ошибку (обычно JSON с описанием ошибки)
-     * @return void
-     */
-    private function setLastErrorResponse(string $raw): void
-    {
-        $decoded = json_decode($raw, true);
-        if (is_array($decoded)) {
-            $this->lastErrorResponse = $decoded;
-        }
-    }
-
-    /**
      * Функция получения последнего ответа с ошибкой для анализа
      *
      * @return array - массив с данными последнего ответа с ошибкой, который может содержать информацию о причинах ошибки (например, validation-errors)
@@ -147,14 +133,14 @@ class OAuthClient
             return $this->sendRequest($method, $url, $data, $originalHeaders, $withAuth, $retry - 1);
         }
 
-        if ($http !== 200) {
+        if ($http < 200 || $http >= 300) {
             logHttpError(
                 'HTTP error',
                 $http,
                 $raw,
                 ['url' => $url]
             );
-            $this->setLastErrorResponse($raw);
+
             throw new HttpException($http, $raw);
         }
 
