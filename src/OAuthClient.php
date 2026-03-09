@@ -8,8 +8,6 @@ class OAuthClient
     private int $requestsInCurrentSecond = 0; // счётчик запросов для троттлинга
     private int $currentSecond = 0; // текущая секунда для троттлинга
     private array $lastErrorResponse = []; // для хранения последнего ответа с ошибкой
-    private ?array $cachedContactFields = null; // кэш метаданных полей контактов
-    private ?array $cachedLeadFields = null; // кэш метаданных полей сделок
 
     public function __construct(array $config)
     {
@@ -461,28 +459,6 @@ class OAuthClient
     }
 
     /**
-     * Функция получения метаданных полей контактов с кэшированием (для retry при ошибках типов)
-     */
-    private function getCachedContactFields(): array
-    {
-        if ($this->cachedContactFields === null) {
-            $this->cachedContactFields = $this->getContactFields();
-        }
-        return $this->cachedContactFields;
-    }
-
-    /**
-     * Функция получения метаданных полей сделок с кэшированием (для retry при ошибках типов)
-     */
-    private function getCachedLeadFields(): array
-    {
-        if ($this->cachedLeadFields === null) {
-            $this->cachedLeadFields = $this->getLeadFields();
-        }
-        return $this->cachedLeadFields;
-    }
-
-    /**
      * Функция получения списка контактов
      *
      * @param integer $limit - количество контактов для получения (по умолчанию 50)
@@ -519,228 +495,324 @@ class OAuthClient
     }
 
     /**
-     * Функция для добавления нового контакта с автоматическим исправлением типов полей
+     * Функция для добавления нового контакта
      *
      * @param array $contact - данные контакта для добавления
-     * @param int $attempts - количество попыток исправления типов (по умолчанию 3)
-     *
+     * @param int $attempts - количество попыток исправления типов (по умолчанию 4)
      * @return array - ответ сервера с добавленным контактом
-     * @throws Exception - если контакт не удаётся добавить
      */
-    public function addContact(array $contact, int $attempts = 3): array
+    public function addContact(array $contact, int $attempts = 4): array
     {
         return $this->addEntityWithTypeRetry(
             $contact,
             "https://{$this->config['baseDomain']}/api/v4/contacts",
             'contact',
-            'contacts',
             $attempts
         );
     }
 
     /**
-     * Функция для добавления новой сделки с автоматическим исправлением типов полей
+     * Функция для добавления новой сделки
      *
      * @param array $lead - данные сделки для добавления
-     * @param int $attempts - количество попыток исправления типов (по умолчанию 3)
-     *
+     * @param int $attempts - количество попыток исправления типов (по умолчанию 4)
      * @return array - ответ сервера с добавленной сделкой
-     * @throws Exception - если сделку не удаётся добавить
      */
-    public function addLead(array $lead, int $attempts = 3): array
+    public function addLead(array $lead, int $attempts = 4): array
     {
         return $this->addEntityWithTypeRetry(
             $lead,
             "https://{$this->config['baseDomain']}/api/v4/leads",
             'lead',
-            'leads',
             $attempts
         );
     }
 
     /**
-     * Добавление сущности (контакт/сделка) с retry при ошибках типов полей
+     * Функция для добавления сущности и при ошибках 400 повторяет попытку
+     *
+     * @param array $entityData - данные сущности для добавления (контакт, сделка и т.д.)
+     * @param string $url - URL для добавления сущности (например, "https://{domain}/api/v4/contacts")
+     * @param string $entityLabel - название сущности (например, "contact" или "lead")
+     * @param int $maxRetries - максимальное количество попыток повтора
+     * @return array - ответ сервера с добавленной сущностью
+     * @throws Exception - если не удаётся добавить сущность после всех попыток
      */
-    private function addEntityWithTypeRetry(array $entity, string $url, string $entityName, string $embeddedKey, int $attempts): array
-    {
-        $attemptNum = 4 - $attempts;
+    public function addEntityWithTypeRetry(
+        array $entityData,
+        string $url,
+        string $entityLabel = 'entity',
+        int $maxRetries = 4
+    ): array {
+        $attempt = 0;
+        $currentData = $entityData;
 
-        try {
-            $response = $this->sendRequest('POST', $url, [$entity]);
+        // если пришёл один объект, а API ожидает массив, оборачиваем в массив
+        if (!isset($currentData[0]) || !is_array($currentData[0])) {
+            $currentData = [$entityData];
+        }
 
-            if ($attemptNum > 1) {
-                log_error("{$entityName} успешно добавлен при попытке {$attemptNum}", [
-                    'id' => $response['_embedded'][$embeddedKey][0]['id'] ?? null
-                ]);
-            }
+        while ($attempt < $maxRetries) {
+            try {
+                $response = $this->sendRequest('POST', $url, $currentData);
+                return $response;
+            } catch (HttpException $e) {
+                $httpStatus = $e->getCode();
+                $response = $e->getResponse();
 
-            return $response;
-        } catch (Exception $e) {
-            $error = $this->getLastErrorResponse();
-
-            if ($attempts > 0 && $this->hasTypeValidationError($error)) {
-                try {
-                    $fieldsMeta = $entityName === 'contact' ? $this->getCachedContactFields() : $this->getCachedLeadFields();
-                } catch (Exception $metaEx) {
-                    log_error('Не удалось получить метаданные полей для исправления типов', ['error' => $metaEx->getMessage()]);
+                if ($httpStatus !== 400) {
                     throw $e;
                 }
 
-                log_error("Ошибка проверки типа при попытке {$attemptNum}, пробуем исправить...", [
-                    'attempts_left' => $attempts,
-                    'error_details' => $error['validation-errors'] ?? []
+                $validationErrors = $this->parseValidationError($response);
+                if (empty($validationErrors)) {
+                    throw $e;
+                }
+
+                $fixed = $this->fixEntityDataByErrors($currentData, $validationErrors);
+                if ($fixed === false) {
+                    log_error("Не удалось исправить {$entityLabel} по ошибкам валидации", [
+                        'errors' => $validationErrors,
+                        'data' => $currentData
+                    ]);
+                    throw $e;
+                }
+
+                $currentData = $fixed;
+                $attempt++;
+
+                log_error("Попытка #{$attempt} для добавления {$entityLabel}: исправлено по ошибкам валидации", [
+                    'errors' => $validationErrors,
+                    'fixed_data' => $fixed
                 ]);
-
-                $fixed = $this->normalizeCustomFields($entity, $fieldsMeta, $entityName);
-                return $this->addEntityWithTypeRetry($fixed, $url, $entityName, $embeddedKey, $attempts - 1);
             }
-
-            $logData = [
-                'error' => $e->getMessage(),
-                'validation_errors' => $error['validation-errors'] ?? null
-            ];
-            if (empty($error['validation-errors']) && !empty($error)) {
-                $logData['full_error_response'] = $error;
-            }
-            log_error("Не удалось добавить {$entityName} после {$attemptNum} попыток", $logData);
-
-            throw $e;
         }
+
+        throw new Exception("Максимальное количество попыток ({$maxRetries}) превышено при добавлении {$entityLabel}. Запрос не отправлен.");
     }
 
-    // Коды ошибок валидации типов полей, которые можно исправить автоматически
-    private const TYPE_VALIDATION_CODES = ['InvalidType', 'BadValue', 'InvalidValueList', 'JsonInvalidValue', 'InvalidDateFormat'];
+    /**
+     * Функция для парсинга ошибок валидации из ответа сервера и нормализации их в удобный формат
+     *
+     * @param array|string|null $errorResponse - ответ сервера с ошибкой, который может быть строкой (JSON) или уже декодированным массивом
+     * @return array - массив с нормализованными ошибками валидации, каждая ошибка содержит 'field' (путь к полю) и 'message' (текст ошибки)
+     */
+    private function parseValidationError(array|string|null $errorResponse): array
+    {
+        if ($errorResponse === null) {
+            return [];
+        }
+
+        // Приводим ответ к массиву
+        if (is_string($errorResponse)) {
+            $payload = json_decode($errorResponse, true);
+            if (!is_array($payload)) {
+                return [];
+            }
+        } else {
+            $payload = $errorResponse;
+        }
+
+        // Получаем массив ошибок
+        $rawErrors = $payload['validation-errors'] ?? $payload['_embedded']['validation-errors'] ?? [];
+
+        if (!is_array($rawErrors)) {
+            return [];
+        }
+
+        $normalized = [];
+
+        foreach ($rawErrors as $error) {
+
+            if (!is_array($error)) {
+                continue;
+            }
+
+            $baseField = $error['field'] ?? null;
+            $baseMessage = $error['message'] ?? $error['error'] ?? '';
+
+            // основная ошибка
+            if ($baseField) {
+                $normalized[] = [
+                    'field' => (string)$baseField,
+                    'message' => (string)$baseMessage
+                ];
+            }
+
+            // вложенные ошибки
+            if (!empty($error['errors']) && is_array($error['errors'])) {
+
+                foreach ($error['errors'] as $nested) {
+
+                    if (!is_array($nested)) {
+                        continue;
+                    }
+
+                    $field =
+                        $nested['path']
+                        ?? $nested['field']
+                        ?? $baseField;
+
+                    if (!$field) {
+                        continue;
+                    }
+
+                    $message =
+                        $nested['detail']
+                        ?? $nested['message']
+                        ?? $nested['error']
+                        ?? $baseMessage;
+
+                    $normalized[] = [
+                        'field' => (string)$field,
+                        'message' => (string)$message
+                    ];
+                }
+            }
+        }
+
+        return $normalized;
+    }
 
     /**
-     * Функция проверяет, содержит ли ответ ошибки валидации типов полей (исправляемые автоматически)
+     * Функция для исправления данных сущности на основе ошибок валидации, возвращаемых API
      *
-     * @param array $error - массив с данными ошибки, полученный от сервера при неудачной попытке добавить контакт/сделку
-     * @return boolean
+     * @param array $entityData - массив с данными сущности, который нужно исправить
+     * @param array $errors - массив с ошибками валидации, каждая ошибка содержит 'field' (путь к полю) и 'message' (текст ошибки)
+     * @return array|false - исправленный массив данных сущности, если были внесены изменения, или false, если не удалось исправить
      */
-    private function hasTypeValidationError(array $error): bool
+    private function fixEntityDataByErrors(array $entityData, array $errors)
     {
-        if (empty($error['validation-errors'])) {
+        $wasFixed = false;
+
+        foreach ($entityData as $i => &$entity) {
+
+            foreach ($errors as $error) {
+
+                $field = $error['field'] ?? $error['path'] ?? null;
+                $message = $error['message'] ?? $error['detail'] ?? '';
+
+                if (!$field) {
+                    continue;
+                }
+
+                $path = $this->parseFieldPath($field);
+
+                if ($this->applyFieldFix($entity, $path, $message)) {
+                    $wasFixed = true;
+                }
+            }
+        }
+
+        return $wasFixed ? $entityData : false;
+    }
+
+    /**
+     * Преобразует путь к полю, например "custom_fields_values.0.values.0.value" в сегменты пути, 
+     * например ['custom_fields_values', 0, 'values', 0, 'value']
+     *
+     * @param mixed $fieldPath - строка с путем к полю, например "custom_fields_values.0.values.0.value"
+     * @return array - массив сегментов пути, например ['custom_fields_values', 0, 'values', 0, 'value']
+     */
+    private function parseFieldPath($fieldPath): array
+    {
+        if (!is_string($fieldPath) || $fieldPath === '') {
+            return [];
+        }
+
+        $fieldPath = str_replace(['][', '[', ']'], ['.', '.', ''], $fieldPath);
+
+        $parts = explode('.', $fieldPath);
+
+        return array_map(function ($p) {
+            return is_numeric($p) ? (int)$p : $p;
+        }, $parts);
+    }
+
+    /**
+     * Применяет исправление к данным на основе сообщения об ошибке и пути к полю.
+     *
+     * @param array $data - данные сущности (контакт, сделка и т.д.), которые нужно исправить
+     * @param array $path - массив сегментов пути к полю, которое нужно исправить (например, ['custom_fields_values', 0, 'values', 0, 'value'])
+     * @param string $errorMessage - текст сообщения об ошибке, который может содержать подсказки о том, как исправить значение
+     * @return bool - true, если было применено исправление, иначе false
+     */
+    private function applyFieldFix(array &$data, array $path, string $errorMessage): bool
+    {
+        if (!$path) {
             return false;
         }
 
-        foreach ($error['validation-errors'] as $block) {
-            foreach ($block['errors'] ?? [] as $e) {
-                if (isset($e['code']) && in_array($e['code'], self::TYPE_VALIDATION_CODES, true)) {
+        $current = &$data;
+
+        foreach ($path as $i => $segment) {
+            if (!is_array($current) || !array_key_exists($segment, $current)) {
+                return false;
+            }
+
+            if ($i === count($path) - 1) {
+                $value = $current[$segment];
+                $msg = strtolower($errorMessage);
+
+                // Целое число (int)
+                if (strpos($msg, 'should be of type int') !== false || strpos($msg, 'integer') !== false) {
+                    if (!is_numeric($value) || $value === '') {
+                        $current[$segment] = 0;
+                    } else {
+                        $current[$segment] = (int)$value;
+                    }
+
+                    log_error('Auto fix (integer)', [
+                        'path' => implode('.', $path),
+                        'old'  => $value,
+                        'new'  => $current[$segment]
+                    ]);
                     return true;
                 }
-            }
-        }
-        return false;
-    }
 
-    /**
-     * Функция приводит значения custom_fields_values к типам из метаданных
-     *
-     * @param array $entity - массив с данными контакта или сделки, который нужно исправить (должен содержать ключ 'custom_fields_values' с массивом полей)
-     * @param array $fieldsMeta - массив с метаданными полей (должен содержать массив полей с ключами 'id' и 'type')
-     * @param string $logPrefix - префикс для логов (например, 'contact' или 'lead'), чтобы было понятно, к какому типу сущности относится лог
-     * @return array - массив с данными контакта или сделки, в котором значения в 'custom_fields_values' приведены к типам из метаданных, если это было необходимо
-     */
-    private function normalizeCustomFields(array $entity, array $fieldsMeta, string $logPrefix = 'entity'): array
-    {
-        if (empty($entity['custom_fields_values'])) {
-            return $entity;
-        }
-
-        $types = [];
-        foreach ($fieldsMeta as $field) {
-            $types[$field['id']] = $field['type'];
-        }
-
-        $fixedCount = 0;
-        foreach ($entity['custom_fields_values'] as &$field) {
-            $type = $types[$field['field_id']] ?? 'text';
-            foreach ($field['values'] as &$value) {
-                $original = $value['value'];
-                $value['value'] = $this->castValueByType($original, $type);
-                if ($value['value'] !== $original) {
-                    $fixedCount++;
-                }
-            }
-        }
-
-        if ($fixedCount > 0) {
-            log_error("Исправлено {$fixedCount} полей типа {$logPrefix}", []);
-        }
-
-        return $entity;
-    }
-
-    /**
-     * Функция для приведения значения к нужному типу в зависимости от типа поля в AmoCRM
-     *
-     * @param [type] $value - исходное значение, которое нужно привести к нужному типу (может быть строкой, числом, массивом и т.д., в зависимости от того, что пришло в запросе на добавление контакта/сделки)
-     * @param string $type - тип поля в AmoCRM (например, 'numeric', 'checkbox', 'date', 'select' и т.д.), который определяет, к какому типу нужно привести значение
-     */
-    private function castValueByType($value, string $type)
-    {
-        // Если значение пустое, возвращаем типизированное значение по умолчанию
-        if ($value === null || $value === '') {
-            switch ($type) {
-                case 'numeric':
-                case 'price':
-                case 'checkbox':
-                case 'select':
-                case 'radiobutton':
-                    return 0;
-                case 'multiselect':
-                    return [];
-                case 'date':
-                case 'date_time':
-                    return (new \DateTime())->format('Y-m-d\TH:i:sP');
-                default:
-                    return '';
-            }
-        }
-        // Приводим значение к нужному типу в зависимости от типа поля
-        switch ($type) {
-
-            case 'numeric':
-            case 'price':
-                if (is_numeric($value)) {
-                    return floatval($value);
-                }
-                preg_match('/-?\d+[\.\,]?\d*/', (string)$value, $matches);
-                return !empty($matches) ? (float)str_replace(',', '.', $matches[0]) : 0;
-
-            case 'checkbox':
-                if (is_bool($value)) return $value;
-                if (is_numeric($value)) return (int)$value !== 0;
-                return filter_var($value, FILTER_VALIDATE_BOOLEAN);
-
-            case 'date':
-            case 'date_time':
-                try {
-                    if (is_numeric($value)) {
-                        $dt = (new \DateTime())->setTimestamp((int)$value);
+                // Число (numeric)
+                if (strpos($msg, 'numeric') !== false) {
+                    if (!is_numeric($value) || $value === '') {
+                        $current[$segment] = 0;
                     } else {
-                        $dt = new \DateTime((string)$value);
+                        $current[$segment] = $value + 0;
                     }
-                    return $dt->format('Y-m-d\TH:i:sP');
-                } catch (\Exception $e) {
-                    return (new \DateTime())->format('Y-m-d\TH:i:sP');
+
+                    log_error('Auto fix (numeric)', [
+                        'path' => implode('.', $path),
+                        'old'  => $value,
+                        'new'  => $current[$segment]
+                    ]);
+                    return true;
                 }
 
-            case 'select':
-            case 'radiobutton':
-                return (int)$value;
+                // Дата
+                if (strpos($msg, 'date') !== false || strpos($msg, 'y-m-d') !== false) {
+                    $formats = ['d.m.Y H:i', 'd.m.Y'];
+                    $tz = new DateTimeZone('Europe/Moscow');
 
-            case 'multiselect':
-                if (is_array($value)) {
-                    return array_map(fn($v) => (int)$v, $value);
+                    foreach ($formats as $fmt) {
+                        $dt = DateTimeImmutable::createFromFormat($fmt, (string)$value, $tz);
+                        if ($dt !== false) {
+                            $current[$segment] = $dt->format('Y-m-d\TH:i:sP');
+
+                            log_error('Auto fix (date)', [
+                                'path' => implode('.', $path),
+                                'old'  => $value,
+                                'new'  => $current[$segment]
+                            ]);
+
+                            return true;
+                        }
+                    }
                 }
-                return [(int)$value];
 
-            case 'text':
-            case 'textarea':
-            case 'url':
-            default:
-                return (string)$value;
+                return false;
+            }
+
+            $current = &$current[$segment];
         }
+
+        return false;
     }
 }

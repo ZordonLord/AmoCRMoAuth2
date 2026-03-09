@@ -67,7 +67,7 @@ if ($isAuthorized) {
             header("Location: callback.php");
             exit;
         } catch (Exception $e) {
-            echo "Ошибка создания контакта: " . $e->getMessage();
+            log_error("Ошибка создания контакта: " . $e->getMessage());
         }
     }
 
@@ -76,6 +76,7 @@ if ($isAuthorized) {
 
         $lead = [
             'name' => $_POST['lead_name'] ?? 'Новая сделка',
+            'price' => $_POST['price'] ?? null,
             'custom_fields_values' => []
         ];
 
@@ -108,7 +109,7 @@ if ($isAuthorized) {
             header("Location: callback.php");
             exit;
         } catch (Exception $e) {
-            echo "Ошибка создания сделки: " . $e->getMessage();
+            log_error("Ошибка создания сделки: " . $e->getMessage());
         }
     }
 }
@@ -229,6 +230,8 @@ if ($isAuthorized) {
             <form method="POST" class="form-container">
                 <input type="text" name="lead_name" placeholder="Название сделки" required="">
                 <br><br>
+                <input type="text" name="price" placeholder="Бюджет сделки">
+                <br>
                 <input type="text" name="1343075" placeholder="Текст">
                 <br>
                 <input type="text" name="1343077" placeholder="Число">
