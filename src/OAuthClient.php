@@ -236,16 +236,23 @@ class OAuthClient
     /**
      * Функция загрузки токенов из файла
      *
-     * @return array - массив с токенами доступа, загруженными из файла
-     * @throws Exception - при отсутствии файла
+     * @return array - массив с токенами доступа, загруженными из файла, или пустой массив, если файл не существует или содержит некорректные данные
      */
-    private function loadTokens(): array
+    public function loadTokens(): array
     {
         if (!file_exists($this->tokenFile)) {
-            throw new Exception("Токены не найдены. Авторизуйтесь.");
+            return [];
         }
 
-        return json_decode(file_get_contents($this->tokenFile), true);
+        $content = file_get_contents($this->tokenFile);
+
+        if (!$content) {
+            return [];
+        }
+
+        $tokens = json_decode($content, true);
+
+        return is_array($tokens) ? $tokens : [];
     }
 
     /**
@@ -369,18 +376,27 @@ class OAuthClient
     }
 
     /**
-     * Функция проверки, авторизован ли пользователь (наличие и валидность токенов)
+     * Функция проверки, авторизован ли пользователь (есть ли валидные токены доступа)
      *
-     * @return boolean - true, если пользователь авторизован (токены есть), иначе false
+     * @return boolean - true, если пользователь авторизован и токены доступа валидны, иначе false
      */
     public function isAuthorized(): bool
     {
-        try {
-            $this->loadTokens();
-            return true;
-        } catch (Exception $e) {
+        $tokens = $this->loadTokens();
+
+        if (empty($tokens['access_token'])) {
             return false;
         }
+
+        if (!empty($tokens['createdAt']) && !empty($tokens['expires_in'])) {
+            $expires = $tokens['createdAt'] + $tokens['expires_in'];
+
+            if ($expires <= time()) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
