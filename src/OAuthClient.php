@@ -515,7 +515,7 @@ class OAuthClient
     }
 
     /**
-     * Функция для добавления сущности и при ошибках 400 повторяет попытку
+     * Функция добавляет сущность с авто-повтором при ошибках валидации 400
      *
      * @param array $entityData - данные сущности для добавления (контакт, сделка и т.д.)
      * @param string $url - URL для добавления сущности (например, "https://{domain}/api/v4/contacts")
@@ -530,27 +530,28 @@ class OAuthClient
         string $entityLabel = 'entity',
         int $maxRetries = 4
     ): array {
-        $attempt = 0;
-        $currentData = $entityData;
+        // если пришёл один объект, оборачиваем в массив
+        $currentData = (isset($entityData[0]) && is_array($entityData[0]))
+            ? $entityData
+            : [$entityData];
 
-        // если пришёл один объект, а API ожидает массив, оборачиваем в массив
-        if (!isset($currentData[0]) || !is_array($currentData[0])) {
-            $currentData = [$entityData];
-        }
-
-        while ($attempt < $maxRetries) {
+        for ($attempt = 0; $attempt < $maxRetries; $attempt++) {
             try {
-                $response = $this->sendRequest('POST', $url, $currentData);
-                return $response;
+                return $this->sendRequest('POST', $url, $currentData);
             } catch (HttpException $e) {
-                $httpStatus = $e->getCode();
-                $response = $e->getResponse();
-
-                if ($httpStatus !== 400) {
+                if ($e->getCode() !== 400) {
                     throw $e;
                 }
+                $response = $e->getResponse();
 
-                $validationErrors = $this->parseValidationError($response);
+                if (is_string($response)) {
+                    $response = json_decode($response, true) ?? [];
+                }
+
+                $validationErrors = $response['validation-errors']
+                    ?? $response['_embedded']['validation-errors']
+                    ?? [];
+
                 if (empty($validationErrors)) {
                     throw $e;
                 }
@@ -565,99 +566,14 @@ class OAuthClient
                 }
 
                 $currentData = $fixed;
-                $attempt++;
-
-                log_error("Попытка #{$attempt} для добавления {$entityLabel}: исправлено по ошибкам валидации", [
+                log_error("Попытка #" . ($attempt + 1) . " для добавления {$entityLabel}: ошибки валидации исправлены", [
                     'errors' => $validationErrors,
                     'fixed_data' => $fixed
                 ]);
             }
         }
 
-        throw new Exception("Максимальное количество попыток ({$maxRetries}) превышено при добавлении {$entityLabel}. Запрос не отправлен.");
-    }
-
-    /**
-     * Функция для парсинга ошибок валидации из ответа сервера и нормализации их в удобный формат
-     *
-     * @param array|string|null $errorResponse - ответ сервера с ошибкой, который может быть строкой (JSON) или уже декодированным массивом
-     * @return array - массив с нормализованными ошибками валидации, каждая ошибка содержит 'field' (путь к полю) и 'message' (текст ошибки)
-     */
-    private function parseValidationError(array|string|null $errorResponse): array
-    {
-        if ($errorResponse === null) {
-            return [];
-        }
-
-        // Приводим ответ к массиву
-        if (is_string($errorResponse)) {
-            $payload = json_decode($errorResponse, true);
-            if (!is_array($payload)) {
-                return [];
-            }
-        } else {
-            $payload = $errorResponse;
-        }
-
-        // Получаем массив ошибок
-        $rawErrors = $payload['validation-errors'] ?? $payload['_embedded']['validation-errors'] ?? [];
-
-        if (!is_array($rawErrors)) {
-            return [];
-        }
-
-        $normalized = [];
-
-        foreach ($rawErrors as $error) {
-
-            if (!is_array($error)) {
-                continue;
-            }
-
-            $baseField = $error['field'] ?? null;
-            $baseMessage = $error['message'] ?? $error['error'] ?? '';
-
-            // основная ошибка
-            if ($baseField) {
-                $normalized[] = [
-                    'field' => (string)$baseField,
-                    'message' => (string)$baseMessage
-                ];
-            }
-
-            // вложенные ошибки
-            if (!empty($error['errors']) && is_array($error['errors'])) {
-
-                foreach ($error['errors'] as $nested) {
-
-                    if (!is_array($nested)) {
-                        continue;
-                    }
-
-                    $field =
-                        $nested['path']
-                        ?? $nested['field']
-                        ?? $baseField;
-
-                    if (!$field) {
-                        continue;
-                    }
-
-                    $message =
-                        $nested['detail']
-                        ?? $nested['message']
-                        ?? $nested['error']
-                        ?? $baseMessage;
-
-                    $normalized[] = [
-                        'field' => (string)$field,
-                        'message' => (string)$message
-                    ];
-                }
-            }
-        }
-
-        return $normalized;
+        throw new Exception("Превышено количество попыток ({$maxRetries}) при добавлении {$entityLabel}");
     }
 
     /**
@@ -667,22 +583,29 @@ class OAuthClient
      * @param array $errors - массив с ошибками валидации, каждая ошибка содержит 'field' (путь к полю) и 'message' (текст ошибки)
      * @return array|false - исправленный массив данных сущности, если были внесены изменения, или false, если не удалось исправить
      */
-    private function fixEntityDataByErrors(array $entityData, array $errors)
+    private function fixEntityDataByErrors(array $entityData, array $errors): array|false
     {
         $wasFixed = false;
 
-        foreach ($entityData as $i => &$entity) {
+        foreach ($entityData as &$entity) {
 
             foreach ($errors as $error) {
 
                 $field = $error['field'] ?? $error['path'] ?? null;
-                $message = $error['message'] ?? $error['detail'] ?? '';
+                $message = strtolower($error['message'] ?? $error['detail'] ?? $error['error'] ?? '');
 
                 if (!$field) {
                     continue;
                 }
 
-                $path = $this->parseFieldPath($field);
+                $path = array_map(
+                    fn($p) => is_numeric($p) ? (int)$p : $p,
+                    explode('.', str_replace(['][', '[', ']'], ['.', '.', ''], (string)$field))
+                );
+
+                if (empty($path)) {
+                    continue;
+                }
 
                 if ($this->applyFieldFix($entity, $path, $message)) {
                     $wasFixed = true;
@@ -690,29 +613,8 @@ class OAuthClient
             }
         }
 
+        unset($entity); // сброс ссылки на последний элемент после цикла
         return $wasFixed ? $entityData : false;
-    }
-
-    /**
-     * Преобразует путь к полю, например "custom_fields_values.0.values.0.value" в сегменты пути, 
-     * например ['custom_fields_values', 0, 'values', 0, 'value']
-     *
-     * @param mixed $fieldPath - строка с путем к полю, например "custom_fields_values.0.values.0.value"
-     * @return array - массив сегментов пути, например ['custom_fields_values', 0, 'values', 0, 'value']
-     */
-    private function parseFieldPath($fieldPath): array
-    {
-        if (!is_string($fieldPath) || $fieldPath === '') {
-            return [];
-        }
-
-        $fieldPath = str_replace(['][', '[', ']'], ['.', '.', ''], $fieldPath);
-
-        $parts = explode('.', $fieldPath);
-
-        return array_map(function ($p) {
-            return is_numeric($p) ? (int)$p : $p;
-        }, $parts);
     }
 
     /**
@@ -723,76 +625,64 @@ class OAuthClient
      * @param string $errorMessage - текст сообщения об ошибке, который может содержать подсказки о том, как исправить значение
      * @return bool - true, если было применено исправление, иначе false
      */
-    private function applyFieldFix(array &$data, array $path, string $errorMessage): bool
+    private function applyFieldFix(array &$data, array $path, string $message): bool
     {
-        if (!$path) {
+        if (empty($path)) {
             return false;
         }
 
         $current = &$data;
+        $lastIndex = count($path) - 1;
 
         foreach ($path as $i => $segment) {
             if (!is_array($current) || !array_key_exists($segment, $current)) {
                 return false;
             }
 
-            if ($i === count($path) - 1) {
+            if ($i === $lastIndex) {
                 $value = $current[$segment];
-                $msg = strtolower($errorMessage);
+                $fixed = false;
 
-                // Целое число (int)
-                if (strpos($msg, 'should be of type int') !== false || strpos($msg, 'integer') !== false) {
-                    if (!is_numeric($value) || $value === '') {
-                        $current[$segment] = 0;
-                    } else {
-                        $current[$segment] = (int)$value;
-                    }
+                // Проверка на наличие ключевых слов в сообщении об ошибке
+                $contains = function (string $haystack, string $needle): bool {
+                    return strpos($haystack, $needle) !== false;
+                };
 
-                    log_error('Auto fix (integer)', [
-                        'path' => implode('.', $path),
-                        'old'  => $value,
-                        'new'  => $current[$segment]
-                    ]);
-                    return true;
+                // Целое число
+                if ($contains($message, 'int') || $contains($message, 'integer')) {
+                    $current[$segment] = (is_numeric($value) && $value !== '') ? (int)$value : 0;
+                    $fixed = true;
                 }
-
-                // Число (numeric)
-                if (strpos($msg, 'numeric') !== false) {
-                    if (!is_numeric($value) || $value === '') {
-                        $current[$segment] = 0;
-                    } else {
-                        $current[$segment] = $value + 0;
-                    }
-
-                    log_error('Auto fix (numeric)', [
-                        'path' => implode('.', $path),
-                        'old'  => $value,
-                        'new'  => $current[$segment]
-                    ]);
-                    return true;
+                // Число (целое или с плавающей точкой)
+                elseif ($contains($message, 'numeric')) {
+                    $current[$segment] = (is_numeric($value) && $value !== '') ? $value + 0 : 0;
+                    $fixed = true;
                 }
-
                 // Дата
-                if (strpos($msg, 'date') !== false || strpos($msg, 'y-m-d') !== false) {
-                    $formats = ['d.m.Y H:i', 'd.m.Y'];
-                    $tz = new DateTimeZone('Europe/Moscow');
-
-                    foreach ($formats as $fmt) {
-                        $dt = DateTimeImmutable::createFromFormat($fmt, (string)$value, $tz);
+                elseif ($contains($message, 'date') || $contains($message, 'y-m-d')) {
+                    foreach (['d.m.Y H:i', 'd.m.Y'] as $fmt) {
+                        $dt = DateTimeImmutable::createFromFormat(
+                            $fmt,
+                            (string)$value,
+                            new DateTimeZone('Europe/Moscow')
+                        );
                         if ($dt !== false) {
                             $current[$segment] = $dt->format('Y-m-d\TH:i:sP');
-
-                            log_error('Auto fix (date)', [
-                                'path' => implode('.', $path),
-                                'old'  => $value,
-                                'new'  => $current[$segment]
-                            ]);
-
-                            return true;
+                            $fixed = true;
+                            break;
                         }
                     }
                 }
 
+                if ($fixed) {
+                    log_error('Auto fix', [
+                        'path' => implode('.', $path),
+                        'old'  => $value,
+                        'new'  => $current[$segment],
+                        'rule' => $message 
+                    ]);
+                    return true;
+                }
                 return false;
             }
 
