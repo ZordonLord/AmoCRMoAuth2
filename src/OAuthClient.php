@@ -7,7 +7,6 @@ class OAuthClient
     private string $tokenFile;
     private int $requestsInCurrentSecond = 0; // счётчик запросов для троттлинга
     private int $currentSecond = 0; // текущая секунда для троттлинга
-    private array $lastErrorResponse = []; // для хранения последнего ответа с ошибкой
 
     public function __construct(array $config)
     {
@@ -33,16 +32,6 @@ class OAuthClient
 
             sleep(1);
         }
-    }
-
-    /**
-     * Функция получения последнего ответа с ошибкой для анализа
-     *
-     * @return array - массив с данными последнего ответа с ошибкой, который может содержать информацию о причинах ошибки (например, validation-errors)
-     */
-    public function getLastErrorResponse(): array
-    {
-        return $this->lastErrorResponse;
     }
 
     /**
@@ -114,16 +103,26 @@ class OAuthClient
         // автообновление токена при 401
         if ($http === 401 && $withAuth && $retry > 0) {
             try {
-                $this->forceRefreshToken(); // пробуем обновить
+                $this->forceRefreshToken(); // Пробуем обновить токен
                 return $this->sendRequest($method, $url, $data, $originalHeaders, true, $retry - 1);
             } catch (Exception $e) {
-                // если refresh не удался, удаляем токены и просим авторизоваться заново
-                $this->logout();
+                // Если ошибка критическая
+                if ($e->getCode() === 401 && str_contains($e->getMessage(), 'AUTH_REQUIRED')) {
+
+                    log_error('🔐 Сессия истекла — требуется авторизация пользователя', [
+                        'url' => $url,
+                        'original_error' => $e->getPrevious()?->getMessage()
+                    ]);
+
+                    throw $e;
+                }
+
                 log_error('Unauthorized after token refresh', [
                     'error' => $e->getMessage(),
                     'url' => $url
                 ]);
-                throw new Exception('Требуется повторная авторизация');
+
+                throw new Exception('Требуется повторная авторизация', 401, $e);
             }
         }
 
@@ -144,14 +143,62 @@ class OAuthClient
             throw new HttpException($http, $raw);
         }
 
+        if ($raw === '') {
+            log_error('Empty response from server', [
+                'http_code' => $http,
+                'url' => $url,
+                'method' => $method
+            ]);
+            throw new Exception('Empty response from server');
+        }
+
         $decoded = json_decode($raw, true);
 
         if (!is_array($decoded)) {
-            log_error('Invalid JSON response', ['response' => $raw]);
-            throw new Exception('Invalid JSON response');
+            log_error('Invalid JSON response', [
+                'response' => substr($raw, 0, 300),
+                'http_code' => $http,
+                'json_error' => json_last_error_msg()
+            ]);
+            throw new Exception('Invalid JSON response: ' . json_last_error_msg());
         }
 
         return $decoded;
+    }
+
+    /**
+     * Проверяет, является ли ошибка критической для авторизации
+     * (требует полной переавторизации, а не повтора)
+     *
+     * @param int $httpCode - HTTP-код ответа
+     * @param array|string $response - тело ответа от сервера
+     * @return bool - true если ошибка критическая
+     */
+    private function isCriticalAuthError(int $httpCode, array|string $response): bool
+    {
+        if ($httpCode !== 400) {
+            return false;
+        }
+
+        $body = is_string($response) ? json_decode($response, true) ?? [] : $response;
+
+        // Ключевые слова, указывающие на критические ошибки, требующие переавторизации
+        $criticalPatterns = [
+            'refresh_token',
+            'Check the',
+            'некорректный запрос',
+            'параметры невалидны'
+        ];
+
+        $haystack = strtolower(json_encode($body, JSON_UNESCAPED_UNICODE));
+
+        foreach ($criticalPatterns as $pattern) {
+            if (str_contains($haystack, strtolower($pattern))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -249,6 +296,10 @@ class OAuthClient
      */
     private function isTokenExpired(array $tokens): bool
     {
+        if (empty($tokens['createdAt']) || empty($tokens['expires_in'])) {
+            return true;
+        }
+
         return time() >= ($tokens['createdAt'] + $tokens['expires_in'] - 60);
     }
 
@@ -258,7 +309,7 @@ class OAuthClient
      * @param array $tokens - массив с токенами доступа, который нужно сохранить
      * @return void
      */
-    function saveTokens(array $tokens): void
+    public function saveTokens(array $tokens): void
     {
         file_put_contents(
             $this->tokenFile,
@@ -286,7 +337,25 @@ class OAuthClient
             'redirect_uri'  => $this->config['redirectUri']
         ];
 
-        $response = $this->sendRequest('POST', $url, $payload, [], false);
+        try {
+            $response = $this->sendRequest('POST', $url, $payload, [], false);
+        } catch (HttpException $e) {
+
+            if ($this->isCriticalAuthError($e->getCode(), $e->getResponse())) {
+
+                log_error('Критическая ошибка refresh_token — требуется переавторизация', [
+                    'http_code' => $e->getCode(),
+                    'response' => $e->getResponse(),
+                    'domain' => $this->config['baseDomain']
+                ]);
+
+                $this->logout();
+
+                throw new Exception('AUTH_REQUIRED: Требуется повторная авторизация', 401, $e);
+            }
+
+            throw $e;
+        }
 
         if (!$this->isValidTokenResponse($response)) {
 
@@ -339,10 +408,16 @@ class OAuthClient
      * Функция для принудительного обновления токена доступа (без проверки срока действия)
      *
      * @return array - массив с новыми токенами доступа, полученными от сервера после принудительного обновления
+     * @throws Exception - если обновление не удалось
      */
     public function forceRefreshToken(): array
     {
         $tokens = $this->loadTokens();
+
+        if (empty($tokens['refresh_token'])) {
+            throw new Exception('Нет refresh_token для обновления');
+        }
+
         $tokens = $this->refreshToken($tokens);
         $this->saveTokens($tokens);
 
@@ -679,7 +754,7 @@ class OAuthClient
                         'path' => implode('.', $path),
                         'old'  => $value,
                         'new'  => $current[$segment],
-                        'rule' => $message 
+                        'rule' => $message
                     ]);
                     return true;
                 }
