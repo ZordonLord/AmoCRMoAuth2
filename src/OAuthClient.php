@@ -746,6 +746,19 @@ class OAuthClient
                     $current[$segment] = (is_numeric($value) && $value !== '') ? (int)$value : 0;
                     $fixed = true;
                 }
+                if ($contains($message, 'int') || $contains($message, 'integer')) {
+                    if ($value !== '') {
+                        $normalized = str_replace(',', '.', $value);
+                        if (is_numeric($normalized)) {
+                            $current[$segment] = (int) round((float)$normalized);
+                        } else {
+                            $current[$segment] = 0;
+                        }
+                    } else {
+                        $current[$segment] = 0;
+                    }
+                    $fixed = true;
+                }
 
                 // Число (целое или с плавающей точкой)
                 elseif ($contains($message, 'numeric')) {
