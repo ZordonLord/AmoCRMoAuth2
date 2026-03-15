@@ -100,6 +100,10 @@ class OAuthClient
         $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
+        if ($http === 204) {
+            return [];
+        }
+
         // автообновление токена при 401
         if ($http === 401 && $withAuth && $retry > 0) {
             try {
@@ -617,38 +621,36 @@ class OAuthClient
                 if ($e->getCode() !== 400) {
                     throw $e;
                 }
-                $response = $e->getResponse();
 
+                $response = $e->getResponse();
                 if (is_string($response)) {
                     $response = json_decode($response, true) ?? [];
                 }
 
-                $validationErrors = $response['validation-errors']
+                $rawErrors = $response['validation-errors']
                     ?? $response['_embedded']['validation-errors']
                     ?? [];
 
-                if (empty($validationErrors)) {
+                if (empty($rawErrors)) {
                     throw $e;
                 }
 
-                $fixed = $this->fixEntityDataByErrors($currentData, $validationErrors);
+                $fixed = $this->fixEntityDataByErrors($currentData, $rawErrors);
+
                 if ($fixed === false) {
-                    log_error("Не удалось исправить {$entityLabel} по ошибкам валидации", [
-                        'errors' => $validationErrors,
+                    log_error("Не удалось исправить {$entityLabel}", [
+                        'errors' => $rawErrors,
                         'data' => $currentData
                     ]);
                     throw $e;
                 }
 
                 $currentData = $fixed;
-                log_error("Попытка #" . ($attempt + 1) . " для добавления {$entityLabel}: ошибки валидации исправлены", [
-                    'errors' => $validationErrors,
-                    'fixed_data' => $fixed
-                ]);
+                log_error("Попытка #" . ($attempt + 1) . " для {$entityLabel}: данные исправлены");
             }
         }
 
-        throw new Exception("Превышено количество попыток ({$maxRetries}) при добавлении {$entityLabel}");
+        throw new Exception("Превышено количество попыток ({$maxRetries}) для {$entityLabel}");
     }
 
     /**
@@ -664,31 +666,47 @@ class OAuthClient
 
         foreach ($entityData as &$entity) {
 
-            foreach ($errors as $error) {
+            // 🔹 Вспомогательная функция для обработки одной ошибки (инлайн)
+            $processError = function ($error) use (&$entity, &$wasFixed) {
+                $field = $error['path'] ?? $error['field'] ?? null;
+                $message = $error['detail'] ?? $error['message'] ?? $error['error'] ?? null;
 
-                $field = $error['field'] ?? $error['path'] ?? null;
-                $message = strtolower($error['message'] ?? $error['detail'] ?? $error['error'] ?? '');
-
-                if (!$field) {
-                    continue;
+                if (!$field || !$message) {
+                    return;
                 }
 
+                // Парсинг пути: "a.0.b" или "a[0][b]" → ['a', 0, 'b']
                 $path = array_map(
                     fn($p) => is_numeric($p) ? (int)$p : $p,
                     explode('.', str_replace(['][', '[', ']'], ['.', '.', ''], (string)$field))
                 );
 
-                if (empty($path)) {
+                if (!empty($path) && $this->applyFieldFix($entity, $path, strtolower($message))) {
+                    $wasFixed = true;
+                }
+            };
+
+            // 🔹 Уровень 1: прямые ошибки
+            foreach ($errors as $error) {
+                if (!is_array($error)) {
                     continue;
                 }
 
-                if ($this->applyFieldFix($entity, $path, $message)) {
-                    $wasFixed = true;
+                // Обрабатываем ошибку, если в ней есть path/field + message
+                $processError($error);
+
+                // 🔹 Уровень 2: вложенные ошибки в ключе 'errors' (структура amoCRM)
+                if (!empty($error['errors']) && is_array($error['errors'])) {
+                    foreach ($error['errors'] as $nested) {
+                        if (is_array($nested)) {
+                            $processError($nested);
+                        }
+                    }
                 }
             }
         }
 
-        unset($entity); // сброс ссылки на последний элемент после цикла
+        unset($entity); // сброс ссылки после цикла
         return $wasFixed ? $entityData : false;
     }
 
@@ -728,23 +746,35 @@ class OAuthClient
                     $current[$segment] = (is_numeric($value) && $value !== '') ? (int)$value : 0;
                     $fixed = true;
                 }
+
                 // Число (целое или с плавающей точкой)
                 elseif ($contains($message, 'numeric')) {
-                    $current[$segment] = (is_numeric($value) && $value !== '') ? $value + 0 : 0;
+                    $cleaned = preg_replace('/[\s\x{00A0}\$€₽£,]/u', '', (string)$value);
+                    $current[$segment] = (is_numeric($cleaned) && $cleaned !== '') ? $cleaned + 0 : 0;
                     $fixed = true;
                 }
+
                 // Дата
                 elseif ($contains($message, 'date') || $contains($message, 'y-m-d')) {
-                    foreach (['d.m.Y H:i', 'd.m.Y'] as $fmt) {
-                        $dt = DateTimeImmutable::createFromFormat(
-                            $fmt,
-                            (string)$value,
-                            new DateTimeZone('Europe/Moscow')
-                        );
+                    $formats = [
+                        'd.m.Y H:i',
+                        'd.m.Y H:i:s',
+                        'd.m.Y'
+                    ];
+                    $tz = new DateTimeZone('Europe/Moscow');
+
+                    foreach ($formats as $fmt) {
+                        $dt = DateTimeImmutable::createFromFormat($fmt, (string)$value, $tz);
+
                         if ($dt !== false) {
-                            $current[$segment] = $dt->format('Y-m-d\TH:i:sP');
+                            if ($contains($message, 'h:i:s') || $contains($message, 't')) {
+                                $newValue = $dt->format('Y-m-d\TH:i:sP');
+                            } else {
+                                $newValue = $dt->format('Y-m-d');
+                            }
+
+                            $current[$segment] = $newValue;
                             $fixed = true;
-                            break;
                         }
                     }
                 }

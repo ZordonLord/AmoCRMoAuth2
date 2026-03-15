@@ -189,17 +189,17 @@ if ($isAuthorized) {
             <form method="POST" class="form-container">
                 <input type="text" name="contact_name" placeholder="Имя контакта" required="">
                 <br><br>
-                <input type="text" name="1343053" placeholder="Текст">
+                <input type="text" name="1410045" placeholder="Текст">
                 <br>
-                <input type="text" name="1343055" placeholder="Число">
+                <input type="text" name="1410047" placeholder="Число">
                 <br>
-                <input type="text" name="1343059" placeholder="Дата">
+                <input type="text" name="1410049" placeholder="Дата">
                 <br>
-                <input type="text" name="1343061" placeholder="Ссылка">
+                <input type="text" name="1410051" placeholder="Ссылка">
                 <br>
-                <input type="text" name="1343063" placeholder="Текстовая область">
+                <input type="text" name="1410053" placeholder="Текстовая область">
                 <br>
-                <input type="text" name="1343071" placeholder="Дата и время">
+                <input type="text" name="1410057" placeholder="Дата и время">
                 <br><br>
                 <button type="submit" name="create_contact" class="btn">
                     Добавить контакт
@@ -232,17 +232,17 @@ if ($isAuthorized) {
                 <br><br>
                 <input type="text" name="price" placeholder="Бюджет сделки">
                 <br>
-                <input type="text" name="1343075" placeholder="Текст">
+                <input type="text" name="1410059" placeholder="Текст">
                 <br>
-                <input type="text" name="1343077" placeholder="Число">
+                <input type="text" name="1410061" placeholder="Число">
                 <br>
-                <input type="text" name="1343081Э" placeholder="Дата">
+                <input type="text" name="1410063" placeholder="Дата">
                 <br>
-                <input type="text" name="1343083" placeholder="Ссылка">
+                <input type="text" name="1410077" placeholder="Ссылка">
                 <br>
-                <input type="text" name="1343085" placeholder="Текстовая область">
+                <input type="text" name="1410079" placeholder="Текстовая область">
                 <br>
-                <input type="text" name="1343093" placeholder="Дата и время">
+                <input type="text" name="1410081" placeholder="Дата и время">
                 <br><br>
                 <button type="submit" name="create_lead" class="btn">
                     Добавить сделку
