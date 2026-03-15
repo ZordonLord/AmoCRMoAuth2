@@ -6,16 +6,19 @@ function log_error(string $message, array $context = []): void
 
     $time = date('Y-m-d H:i:s');
 
+    $sessionId = session_id() ?: 'no-session';
+    $requestId = $GLOBALS['REQUEST_ID'] ?? 'no-req';
+
     if (!empty($context)) {
         $message .= ' | ' . json_encode(
             $context,
             JSON_UNESCAPED_UNICODE |
-            JSON_UNESCAPED_SLASHES |
-            JSON_PARTIAL_OUTPUT_ON_ERROR
+                JSON_UNESCAPED_SLASHES |
+                JSON_PARTIAL_OUTPUT_ON_ERROR
         );
     }
 
-    $line = "[$time] $message" . PHP_EOL;
+    $line = "[$time] [session:$sessionId] [req:$requestId] $message" . PHP_EOL;
 
     file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
 }
