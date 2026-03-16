@@ -805,4 +805,41 @@ class OAuthClient
 
         return false;
     }
+
+    /**
+     * Пытается удалить пользовательское поле по пути из ошибки, если исправить его не удалось.
+     *
+     * @param array $entity - данные сущности, из которой нужно удалить пользовательское поле
+     * @param array $path - массив сегментов пути к полю, которое нужно удалить (например, ['custom_fields_values', 0])
+     * @return boolean - true, если поле было успешно удалено, иначе false
+     */
+    private function removeCustomFieldByPath(array &$entity, array $path): bool
+    {
+        if (!isset($path[0]) || $path[0] !== 'custom_fields_values') {
+            return false;
+        }
+
+        $index = $path[1] ?? null;
+
+        if (!is_int($index)) {
+            return false;
+        }
+
+        if (!isset($entity['custom_fields_values'][$index])) {
+            return false;
+        }
+
+        $removed = $entity['custom_fields_values'][$index];
+
+        unset($entity['custom_fields_values'][$index]);
+
+        $entity['custom_fields_values'] = array_values($entity['custom_fields_values']);
+
+        log_error('Удалено невалидное custom field', [
+            'index' => $index,
+            'field' => $removed
+        ]);
+
+        return true;
+    }
 }
