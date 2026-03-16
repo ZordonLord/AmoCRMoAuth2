@@ -666,7 +666,7 @@ class OAuthClient
 
         foreach ($entityData as &$entity) {
 
-            // 🔹 Вспомогательная функция для обработки одной ошибки (инлайн)
+            // Вспомогательная функция для обработки одной ошибки
             $processError = function ($error) use (&$entity, &$wasFixed) {
                 $field = $error['path'] ?? $error['field'] ?? null;
                 $message = $error['detail'] ?? $error['message'] ?? $error['error'] ?? null;
@@ -681,21 +681,25 @@ class OAuthClient
                     explode('.', str_replace(['][', '[', ']'], ['.', '.', ''], (string)$field))
                 );
 
-                if (!empty($path) && $this->applyFieldFix($entity, $path, strtolower($message))) {
-                    $wasFixed = true;
+                if (!empty($path)) {
+
+                    // Пробуем исправить значение по подсказкам из сообщения об ошибке
+                    $fixed = $this->applyFieldFix($entity, $path, strtolower($message));
+
+                    if ($fixed) {
+                        $wasFixed = true;
+                        return;
+                    }
+
+                    // если не смогли исправить — пробуем удалить custom field
+                    if ($this->removeCustomFieldByPath($entity, $path)) {
+                        $wasFixed = true;
+                        return;
+                    }
                 }
             };
 
-            // 🔹 Уровень 1: прямые ошибки
             foreach ($errors as $error) {
-                if (!is_array($error)) {
-                    continue;
-                }
-
-                // Обрабатываем ошибку, если в ней есть path/field + message
-                $processError($error);
-
-                // 🔹 Уровень 2: вложенные ошибки в ключе 'errors' (структура amoCRM)
                 if (!empty($error['errors']) && is_array($error['errors'])) {
                     foreach ($error['errors'] as $nested) {
                         if (is_array($nested)) {
@@ -758,9 +762,19 @@ class OAuthClient
 
                 // Число (целое или с плавающей точкой)
                 elseif ($contains($message, 'numeric')) {
-                    $cleaned = preg_replace('/[\s\x{00A0}\$€₽£,]/u', '', (string)$value);
-                    $current[$segment] = (is_numeric($cleaned) && $cleaned !== '') ? $cleaned + 0 : 0;
-                    $fixed = true;
+                    $str = (string)$value;
+                    $cleaned = preg_replace('/[^\d\-.,]/u', '', $str);
+                    $cleaned = str_replace(',', '.', $cleaned);
+                    $parts = explode('.', $cleaned);
+
+                    if (count($parts) > 2) {
+                        $cleaned = $parts[0] . '.' . implode('', array_slice($parts, 1));
+                    }
+                    
+                    if (is_numeric($cleaned) && $cleaned !== '') {
+                        $current[$segment] = $cleaned + 0;
+                        $fixed = true;
+                    }
                 }
 
                 // Дата
