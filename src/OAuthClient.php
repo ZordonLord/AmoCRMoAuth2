@@ -664,53 +664,85 @@ class OAuthClient
     {
         $wasFixed = false;
 
-        foreach ($entityData as &$entity) {
+        foreach ($errors as $errorGroup) {
 
-            // Вспомогательная функция для обработки одной ошибки
-            $processError = function ($error) use (&$entity, &$wasFixed) {
+            if (!is_array($errorGroup)) {
+                continue;
+            }
+
+            // request_id — индекс объекта в массиве
+            $requestId = isset($errorGroup['request_id'])
+                ? (int)$errorGroup['request_id']
+                : null;
+
+            if ($requestId === null || !isset($entityData[$requestId])) {
+                continue;
+            }
+
+            $entity = &$entityData[$requestId];
+
+            if (empty($errorGroup['errors']) || !is_array($errorGroup['errors'])) {
+                unset($entity);
+                continue;
+            }
+
+            foreach ($errorGroup['errors'] as $error) {
+
+                if (!is_array($error)) {
+                    continue;
+                }
+
                 $field = $error['path'] ?? $error['field'] ?? null;
                 $message = $error['detail'] ?? $error['message'] ?? $error['error'] ?? null;
 
                 if (!$field || !$message) {
-                    return;
+                    continue;
                 }
 
-                // Парсинг пути: "a.0.b" или "a[0][b]" → ['a', 0, 'b']
+                // Парсинг пути: "a.0.b" или "a[0][b]" → ['a',0,'b']
                 $path = array_map(
                     fn($p) => is_numeric($p) ? (int)$p : $p,
                     explode('.', str_replace(['][', '[', ']'], ['.', '.', ''], (string)$field))
                 );
 
-                if (!empty($path)) {
-
-                    // Пробуем исправить значение по подсказкам из сообщения об ошибке
-                    $fixed = $this->applyFieldFix($entity, $path, strtolower($message));
-
-                    if ($fixed) {
-                        $wasFixed = true;
-                        return;
-                    }
-
-                    // если не смогли исправить — пробуем удалить custom field
-                    if ($this->removeCustomFieldByPath($entity, $path)) {
-                        $wasFixed = true;
-                        return;
-                    }
+                if (empty($path)) {
+                    continue;
                 }
-            };
 
-            foreach ($errors as $error) {
-                if (!empty($error['errors']) && is_array($error['errors'])) {
-                    foreach ($error['errors'] as $nested) {
-                        if (is_array($nested)) {
-                            $processError($nested);
-                        }
-                    }
+                // Пытаемся исправить значение
+                $fixed = $this->applyFieldFix($entity, $path, strtolower($message));
+
+                if ($fixed) {
+                    $wasFixed = true;
+                    continue;
+                }
+
+                // Если исправить не удалось — пробуем удалить custom field
+                $fieldId = null;
+
+                if (
+                    isset($path[0], $path[1]) &&
+                    $path[0] === 'custom_fields_values' &&
+                    isset($entity['custom_fields_values'][$path[1]]['field_id'])
+                ) {
+                    $fieldId = (int)$entity['custom_fields_values'][$path[1]]['field_id'];
+                }
+
+                if ($this->removeCustomFieldByPath($entity, $path, $fieldId)) {
+
+                    $wasFixed = true;
+
+                    log_error('🗑️ Removed unfixable field', [
+                        'path' => implode('.', $path),
+                        'field_id' => $fieldId,
+                        'reason' => 'auto-fix failed'
+                    ]);
                 }
             }
+
+            unset($entity);
         }
 
-        unset($entity); // сброс ссылки после цикла
         return $wasFixed ? $entityData : false;
     }
 
@@ -770,7 +802,7 @@ class OAuthClient
                     if (count($parts) > 2) {
                         $cleaned = $parts[0] . '.' . implode('', array_slice($parts, 1));
                     }
-                    
+
                     if (is_numeric($cleaned) && $cleaned !== '') {
                         $current[$segment] = $cleaned + 0;
                         $fixed = true;
@@ -827,33 +859,42 @@ class OAuthClient
      * @param array $path - массив сегментов пути к полю, которое нужно удалить (например, ['custom_fields_values', 0])
      * @return boolean - true, если поле было успешно удалено, иначе false
      */
-    private function removeCustomFieldByPath(array &$entity, array $path): bool
+    private function removeCustomFieldByPath(array &$entity, array $path, ?int $targetFieldId = null): bool
     {
+        // Должен начинаться с custom_fields_values
         if (!isset($path[0]) || $path[0] !== 'custom_fields_values') {
             return false;
         }
 
+        // Если знаем field_id — ищем и удаляем по нему (точнее!)
+        if ($targetFieldId !== null && !empty($entity['custom_fields_values'])) {
+            foreach ($entity['custom_fields_values'] as $index => $field) {
+                if (($field['field_id'] ?? null) === $targetFieldId) {
+                    unset($entity['custom_fields_values'][$index]);
+                    $entity['custom_fields_values'] = array_values($entity['custom_fields_values']);
+
+                    log_error('Removed custom field by field_id', [
+                        'field_id' => $targetFieldId,
+                        'index' => $index
+                    ]);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Фоллбэк: удаляем по индексу (старая логика)
         $index = $path[1] ?? null;
-
-        if (!is_int($index)) {
+        if (!is_int($index) || !isset($entity['custom_fields_values'][$index])) {
             return false;
         }
-
-        if (!isset($entity['custom_fields_values'][$index])) {
-            return false;
-        }
-
-        $removed = $entity['custom_fields_values'][$index];
 
         unset($entity['custom_fields_values'][$index]);
-
         $entity['custom_fields_values'] = array_values($entity['custom_fields_values']);
 
-        log_error('Удалено невалидное custom field', [
-            'index' => $index,
-            'field' => $removed
+        log_error('Removed custom field by index', [
+            'index' => $index
         ]);
-
         return true;
     }
 }

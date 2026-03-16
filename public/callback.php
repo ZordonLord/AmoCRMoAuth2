@@ -71,6 +71,80 @@ if ($isAuthorized) {
         }
     }
 
+    // Обработка создания 3 тестовых контактов
+    if (isset($_POST['create_test_contacts'])) {
+
+        $testContacts = [
+            [
+                'name' => 'Тестовый контакт 1',
+                'custom_fields_values' => [
+                    [
+                        'field_id' => 1410045,
+                        'values' => [['value' => 'Текст из теста 1']]
+                    ],
+                    [
+                        'field_id' => 1410047,
+                        'values' => [['value' => '1 000']]
+                    ],
+                    [
+                        'field_id' => 1410049,
+                        'values' => [['value' => '15.03.2024']]
+                    ]
+                ]
+            ],
+            [
+                'name' => 'Тестовый контакт 2',
+                'custom_fields_values' => [
+                    [
+                        'field_id' => 1410045,
+                        'values' => [['value' => 'Текст из теста 2']]
+                    ],
+                    [
+                        'field_id' => 1410047,
+                        'values' => [['value' => '2500 руб.']]
+                    ],
+                    [
+                        'field_id' => 1410051,
+                        'values' => [['value' => 'https://example.com']]
+                    ]
+                ]
+            ],
+            [
+                'name' => 'Тестовый контакт 3',
+                'custom_fields_values' => [
+                    [
+                        'field_id' => 1410049,
+                        'values' => [['value' => '05.04.2024']]
+                    ],
+                    [
+                        'field_id' => 1410053,
+                        'values' => [['value' => 'Многострочный текст из теста']]
+                    ],
+                    [
+                        'field_id' => 1410057,
+                        'values' => [['value' => '20.04.2024 14:30']]
+                    ]
+                ]
+            ]
+        ];
+
+        try {
+            $response = $client->addContact($testContacts);
+            log_error('Тестовые контакты созданы');
+
+            header("Location: callback.php");
+            exit;
+        } catch (Exception $e) {
+            log_error("Ошибка создания тестовых контактов: " . $e->getMessage(), [
+                'exception' => get_class($e),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            header("Location: callback.php");
+            exit;
+        }
+    }
+
     // Создаём сделку при отправке формы
     if (isset($_POST['create_lead'])) {
 
@@ -203,6 +277,11 @@ if ($isAuthorized) {
                 <br><br>
                 <button type="submit" name="create_contact" class="btn">
                     Добавить контакт
+                </button>
+                <br><br>
+                <!-- Кнопка для тестовых контактов -->
+                <button type="submit" name="create_test_contacts" class="btn btn-test" style="background-color: #28a745; margin-left: 10px;">
+                    Создать 3 тестовых контакта
                 </button>
             </form>
 
