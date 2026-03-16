@@ -3,11 +3,9 @@
 function log_error(string $message, array $context = []): void
 {
     $file = __DIR__ . '/../storage/error.log';
-
     $time = date('Y-m-d H:i:s');
-
-    $sessionId = session_id() ?: 'no-session';
-    $requestId = $GLOBALS['REQUEST_ID'] ?? 'no-req';
+    $sessionId = substr(session_id() ?: 'no-session', 0, 8);
+    $requestId = substr($GLOBALS['REQUEST_ID'] ?? 'no-req', 0, 8);
 
     if (!empty($context)) {
         $message .= ' | ' . json_encode(
@@ -18,7 +16,7 @@ function log_error(string $message, array $context = []): void
         );
     }
 
-    $line = "[$time] [session:$sessionId] [req:$requestId] $message" . PHP_EOL;
+    $line = "[$time] [sess:$sessionId] [req:$requestId] $message" . PHP_EOL;
 
     file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
 }
