@@ -24,7 +24,7 @@ function log_error(string $message, array $context = []): void
 function logHttpError(
     string $message,
     int $httpCode,
-    array|string|null $responseBody = null,
+    $responseBody = null,
     array $extraContext = []
 ): void {
 

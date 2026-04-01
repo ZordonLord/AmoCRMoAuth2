@@ -10,12 +10,12 @@ if (isset($_GET['code'])) {
     try {
         $tokens = $client->exchangeCodeForTokens($_GET['code']);
         $client->saveTokens($tokens);
-        header("Location: callback.php");
+        header("Location: index.php");
         exit;
 
     } catch (Exception $e) {
         error_log("OAuth error: " . $e->getMessage());
-        header("Location: callback.php?status=error");
+        header("Location: index.php?status=error");
         exit;
     }
 }

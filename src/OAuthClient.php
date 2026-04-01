@@ -3,10 +3,10 @@ require_once __DIR__ . '/HttpException.php';
 
 class OAuthClient
 {
-    private array $config;
-    private string $tokenFile;
-    private int $requestsInCurrentSecond = 0; // счётчик запросов для троттлинга
-    private int $currentSecond = 0; // текущая секунда для троттлинга
+    private $config;
+    private $tokenFile;
+    private $requestsInCurrentSecond = 0; // счётчик запросов для троттлинга
+    private $currentSecond = 0; // текущая секунда для троттлинга
 
     public function __construct(array $config)
     {
@@ -111,11 +111,11 @@ class OAuthClient
                 return $this->sendRequest($method, $url, $data, $originalHeaders, true, $retry - 1);
             } catch (Exception $e) {
                 // Если ошибка критическая
-                if ($e->getCode() === 401 && str_contains($e->getMessage(), 'AUTH_REQUIRED')) {
+                if ($e->getCode() === 401 && strpos($e->getMessage(), 'AUTH_REQUIRED') !== false) {
 
-                    log_error('🔐 Сессия истекла — требуется авторизация пользователя', [
+                    log_error('Сессия истекла — требуется авторизация пользователя', [
                         'url' => $url,
-                        'original_error' => $e->getPrevious()?->getMessage()
+                        'original_error' => $e->getPrevious() ? $e->getPrevious()->getMessage() : null
                     ]);
 
                     throw $e;
@@ -175,10 +175,10 @@ class OAuthClient
      * (требует полной переавторизации, а не повтора)
      *
      * @param int $httpCode - HTTP-код ответа
-     * @param array|string $response - тело ответа от сервера
+     * @param $response - тело ответа от сервера
      * @return bool - true если ошибка критическая
      */
-    private function isCriticalAuthError(int $httpCode, array|string $response): bool
+    private function isCriticalAuthError(int $httpCode, $response): bool
     {
         if ($httpCode !== 400) {
             return false;
@@ -197,7 +197,7 @@ class OAuthClient
         $haystack = strtolower(json_encode($body, JSON_UNESCAPED_UNICODE));
 
         foreach ($criticalPatterns as $pattern) {
-            if (str_contains($haystack, strtolower($pattern))) {
+            if (strpos($haystack, strtolower($pattern)) !== false) {
                 return true;
             }
         }
@@ -949,7 +949,7 @@ class OAuthClient
      * @param array $errors - массив с ошибками валидации, каждая ошибка содержит 'field' (путь к полю) и 'message' (текст ошибки)
      * @return array|false - исправленный массив данных сущности, если были внесены изменения, или false, если не удалось исправить
      */
-    private function fixEntityDataByErrors(array $entityData, array $errors): array|false
+    private function fixEntityDataByErrors(array $entityData, array $errors)
     {
         $wasFixed = false;
 
@@ -990,7 +990,7 @@ class OAuthClient
 
                 // Парсинг пути: "a.0.b" или "a[0][b]" → ['a',0,'b']
                 $path = array_map(
-                    fn($p) => is_numeric($p) ? (int)$p : $p,
+                    function($p) { return is_numeric($p) ? (int)$p : $p; },
                     explode('.', str_replace(['][', '[', ']'], ['.', '.', ''], (string)$field))
                 );
 

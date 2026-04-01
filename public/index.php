@@ -21,6 +21,8 @@ $client = $app['client'];
         <?= $client->renderAuthButton() ?>
         <br><br>
         <a href="callback.php" class="btn">Перейти к callback странице</a>
+        <br><br>
+        <a href="duplicates.php" class="btn">Поиск дублей контактов</a>
     </div>
 </body>
 
