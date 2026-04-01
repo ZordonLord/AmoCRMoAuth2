@@ -542,6 +542,295 @@ class OAuthClient
     }
 
     /**
+     * Загружает все контакты постранично.
+     *
+     * @param int $limit количество контактов на страницу (макс. 250)
+     * @return array
+     */
+    public function getAllContacts(int $limit = 250): array
+    {
+        $allContacts = [];
+        $page = 1;
+
+        while (true) {
+            $contacts = $this->getContacts($limit, $page);
+
+            if (empty($contacts)) {
+                break;
+            }
+
+            $allContacts = array_merge($allContacts, $contacts);
+
+            if (count($contacts) < $limit) {
+                break;
+            }
+
+            $page++;
+        }
+
+        return $allContacts;
+    }
+
+    /**
+     * Поиск дубликатов контактов по телефону/email
+     *
+     * @param string $type phone|email
+     * @return array
+     */
+    public function findDuplicateContacts(string $type = 'phone'): array
+    {
+        $fieldCode = strtolower($type) === 'email' ? 'EMAIL' : 'PHONE';
+
+        return $this->findDuplicateContactsByFieldCode($fieldCode);
+    }
+
+    /**
+     * Ищет дубликаты контактов по значению произвольного поля (field_code).
+     *
+     * @param string $fieldCode
+     * @return array
+     */
+    public function findDuplicateContactsByFieldCode(string $fieldCode): array
+    {
+        $targetCode = strtoupper(trim($fieldCode));
+        if ($targetCode === '') {
+            return [];
+        }
+
+        $contacts = $this->getAllContacts();
+
+        $map = [];
+        $seenByContact = [];
+
+        foreach ($contacts as $contact) {
+            $contactId = (int)($contact['id'] ?? 0);
+            $contactName = trim((string)($contact['name'] ?? '')) ?: 'Без имени';
+
+            if ($contactId <= 0) {
+                continue;
+            }
+
+            $customFields = $contact['custom_fields_values'] ?? [];
+            if (!is_array($customFields)) {
+                continue;
+            }
+
+            foreach ($customFields as $field) {
+                $fieldCodeFromContact = strtoupper((string)($field['field_code'] ?? ''));
+                if ($fieldCodeFromContact !== $targetCode) {
+                    continue;
+                }
+
+                $values = $field['values'] ?? [];
+                if (!is_array($values)) {
+                    continue;
+                }
+
+                foreach ($values as $valueItem) {
+                    $rawValue = trim((string)($valueItem['value'] ?? ''));
+                    if ($rawValue === '') {
+                        continue;
+                    }
+
+                    $normalizedValue = $this->normalizeDuplicateValue($rawValue, $targetCode);
+                    if ($normalizedValue === '' || $normalizedValue === null) {
+                        continue;
+                    }
+
+                    $dedupeKey = $contactId . '|' . $normalizedValue;
+                    if (isset($seenByContact[$dedupeKey])) {
+                        continue;
+                    }
+
+                    $seenByContact[$dedupeKey] = true;
+
+                    if (!isset($map[$normalizedValue])) {
+                        $map[$normalizedValue] = [];
+                    }
+
+                    $map[$normalizedValue][] = [
+                        'id' => $contactId,
+                        'name' => $contactName,
+                        'raw_value' => $rawValue
+                    ];
+                }
+            }
+        }
+
+        $duplicates = [];
+        foreach ($map as $value => $items) {
+            if (count($items) <= 1) {
+                continue;
+            }
+
+            $duplicates[] = [
+                'value' => $value,
+                'contacts' => $items
+            ];
+        }
+
+        usort($duplicates, function (array $a, array $b): int {
+            return count($b['contacts']) <=> count($a['contacts']);
+        });
+
+        return $duplicates;
+    }
+
+    /**
+     * Ищет дубликаты контактов по field_id пользовательского поля.
+     *
+     * @param int $fieldId
+     * @return array
+     */
+    public function findDuplicateContactsByCustomFieldId(int $fieldId): array
+    {
+        if ($fieldId <= 0) {
+            return [];
+        }
+
+        $contacts = $this->getAllContacts();
+
+        $map = [];
+        $seenByContact = [];
+
+        foreach ($contacts as $contact) {
+            $contactId = (int)($contact['id'] ?? 0);
+            $contactName = trim((string)($contact['name'] ?? '')) ?: 'Без имени';
+
+            if ($contactId <= 0) {
+                continue;
+            }
+
+            $customFields = $contact['custom_fields_values'] ?? [];
+            if (!is_array($customFields)) {
+                continue;
+            }
+
+            foreach ($customFields as $field) {
+                $fieldIdFromContact = (int)($field['field_id'] ?? 0);
+                if ($fieldIdFromContact !== $fieldId) {
+                    continue;
+                }
+
+                $values = $field['values'] ?? [];
+                if (!is_array($values)) {
+                    continue;
+                }
+
+                foreach ($values as $valueItem) {
+                    $rawValue = trim((string)($valueItem['value'] ?? ''));
+                    if ($rawValue === '') {
+                        continue;
+                    }
+
+                    $normalizedValue = $this->normalizeDuplicateCustomValue($rawValue);
+                    if ($normalizedValue === '' || $normalizedValue === null) {
+                        continue;
+                    }
+
+                    $dedupeKey = $contactId . '|' . $normalizedValue;
+                    if (isset($seenByContact[$dedupeKey])) {
+                        continue;
+                    }
+
+                    $seenByContact[$dedupeKey] = true;
+
+                    if (!isset($map[$normalizedValue])) {
+                        $map[$normalizedValue] = [];
+                    }
+
+                    $map[$normalizedValue][] = [
+                        'id' => $contactId,
+                        'name' => $contactName,
+                        'raw_value' => $rawValue
+                    ];
+                }
+            }
+        }
+
+        $duplicates = [];
+        foreach ($map as $value => $items) {
+            if (count($items) <= 1) {
+                continue;
+            }
+
+            $duplicates[] = [
+                'value' => $value,
+                'contacts' => $items
+            ];
+        }
+
+        usort($duplicates, function (array $a, array $b): int {
+            return count($b['contacts']) <=> count($a['contacts']);
+        });
+
+        return $duplicates;
+    }
+
+    /**
+     * Нормализует значение для дедупликации.
+     *
+     * @param string $rawValue
+     * @param string $targetCode
+     * @return string
+     */
+    private function normalizeDuplicateValue(string $rawValue, string $targetCode): string
+    {
+        $rawValue = trim($rawValue);
+        if ($rawValue === '') {
+            return '';
+        }
+
+        if ($targetCode === 'EMAIL') {
+            return strtolower($rawValue);
+        }
+
+        if ($targetCode === 'PHONE') {
+            return preg_replace('/\D+/', '', $rawValue);
+        }
+
+        if (function_exists('mb_strtolower')) {
+            return mb_strtolower($rawValue, 'UTF-8');
+        }
+
+        return strtolower($rawValue);
+    }
+
+    /**
+     * Нормализация для кастомных полей
+     */
+    private function normalizeDuplicateCustomValue(string $rawValue): string
+    {
+        $rawValue = trim($rawValue);
+        if ($rawValue === '') {
+            return '';
+        }
+
+        // Нормализуем пробелы
+        $rawValue = preg_replace('/\s+/u', ' ', $rawValue);
+
+        // Пытаемся привести к числу (numeric) если похоже на число
+        $numCandidate = str_replace(' ', '', $rawValue);
+        $numCandidate = str_replace(',', '.', $numCandidate);
+
+        if (preg_match('/^-?\d+(\.\d+)?$/', $numCandidate)) {
+            // убираем лишние нули после запятой
+            if (strpos($numCandidate, '.') !== false) {
+                $numCandidate = rtrim($numCandidate, '0');
+                $numCandidate = rtrim($numCandidate, '.');
+            }
+
+            return strtolower($numCandidate);
+        }
+
+        if (function_exists('mb_strtolower')) {
+            return mb_strtolower($rawValue, 'UTF-8');
+        }
+
+        return strtolower($rawValue);
+    }
+
+    /**
      * Функция получения списка сделок
      *
      * @param integer $limit - количество сделок для получения (по умолчанию 50)
