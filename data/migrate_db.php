@@ -5,10 +5,13 @@ $db = new PDO('sqlite:' . __DIR__ . '/database.sqlite');
 $db->exec("
 CREATE TABLE IF NOT EXISTS tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
     client_id TEXT,
+    base_domain TEXT,
     access_token TEXT,
     refresh_token TEXT,
-    expires_at INTEGER
+    expires_at INTEGER,
+    UNIQUE(user_id, client_id, base_domain)
 );
 
 CREATE TABLE IF NOT EXISTS users (

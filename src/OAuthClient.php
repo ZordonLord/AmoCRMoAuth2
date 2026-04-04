@@ -277,7 +277,16 @@ class OAuthClient
      */
     public function loadTokens(): array
     {
-        $token = $this->storage->getToken();
+        if (empty($_SESSION['user_id'])) {
+            return [];
+        }
+
+        $token = $this->storage->getToken(
+            $_SESSION['user_id'],
+            $this->config['clientId'],
+            $this->config['baseDomain']
+        );
+
         return $token ?: [];
     }
 
@@ -306,10 +315,12 @@ class OAuthClient
         $created = $tokens['server_time'] ?? $tokens['createdAt'] ?? time();
 
         $this->storage->saveToken([
-            'client_id'    => $this->config['clientId'],
-            'access_token' => $tokens['access_token'],
+            'user_id'       => $_SESSION['user_id'],
+            'client_id'     => $this->config['clientId'],
+            'base_domain'   => $this->config['baseDomain'],
+            'access_token'  => $tokens['access_token'],
             'refresh_token' => $tokens['refresh_token'],
-            'expires_at'   => $created + $tokens['expires_in'],
+            'expires_at'    => $created + $tokens['expires_in'],
         ]);
     }
 
@@ -445,15 +456,11 @@ class OAuthClient
             return false;
         }
 
-        if (!empty($tokens['createdAt']) && !empty($tokens['expires_in'])) {
-            $expires = $tokens['createdAt'] + $tokens['expires_in'];
-
-            if ($expires <= time()) {
-                return false;
-            }
+        if (empty($tokens['expires_at'])) {
+            return false;
         }
 
-        return true;
+        return $tokens['expires_at'] > time();
     }
 
     /**
@@ -478,7 +485,11 @@ class OAuthClient
      */
     public function logout(): void
     {
-        $this->storage->clearToken();
+        $this->storage->clearToken(
+            $_SESSION['user_id'],
+            $this->config['clientId'],
+            $this->config['baseDomain']
+        );
     }
 
     /**

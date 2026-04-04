@@ -8,6 +8,11 @@ $config = require __DIR__ . '/config/config.php';
 
 // Инициализируем сессию и глобальный ID запроса для логирования
 session_start();
+
+// Генерируем уникальный ID для пользователя, если его нет в сессии
+if (empty($_SESSION['user_id'])) {
+    $_SESSION['user_id'] = bin2hex(random_bytes(16));
+}
 // Генерируем уникальный ID для каждого запроса для удобства логирования
 $GLOBALS['REQUEST_ID'] = bin2hex(random_bytes(4));
 
