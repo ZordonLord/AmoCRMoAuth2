@@ -4,14 +4,14 @@ require_once __DIR__ . '/HttpException.php';
 class OAuthClient
 {
     private $config;
-    private $tokenFile;
+    private $storage;
     private $requestsInCurrentSecond = 0; // счётчик запросов для троттлинга
     private $currentSecond = 0; // текущая секунда для троттлинга
 
-    public function __construct(array $config)
+    public function __construct(array $config, StorageInterface $storage)
     {
         $this->config = $config;
-        $this->tokenFile = $config['tokenStorage'];
+        $this->storage = $storage;
     }
 
     // Функция для троттлинга запросов (не более 7 запросов в секунду)
@@ -271,40 +271,28 @@ class OAuthClient
     }
 
     /**
-     * Функция загрузки токенов из файла
+     * Функция для загрузки токенов из хранилища
      *
-     * @return array - массив с токенами доступа, загруженными из файла, или пустой массив, если файл не существует или содержит некорректные данные
+     * @return array - массив с токенами доступа, полученными из хранилища, или пустой массив, если токены не найдены или недействительны
      */
     public function loadTokens(): array
     {
-        if (!file_exists($this->tokenFile)) {
-            return [];
-        }
-
-        $content = file_get_contents($this->tokenFile);
-
-        if (!$content) {
-            return [];
-        }
-
-        $tokens = json_decode($content, true);
-
-        return is_array($tokens) ? $tokens : [];
+        $token = $this->storage->getToken();
+        return $token ?: [];
     }
 
     /**
      * Функция проверки срока действия токена доступа
      *
-     * @param array $tokens - массив с токенами доступа, содержащий поле 'createdAt' (время создания) и 'expires_in' (время жизни в секундах)
+     * @param array $tokens - массив с токенами доступа, который нужно проверить на истечение срока действия
      * @return boolean - true, если токен истёк или скоро истечёт (менее 60 секунд до истечения), иначе false
      */
     private function isTokenExpired(array $tokens): bool
     {
-        if (empty($tokens['createdAt']) || empty($tokens['expires_in'])) {
+        if (empty($tokens['expires_at'])) {
             return true;
         }
-
-        return time() >= ($tokens['createdAt'] + $tokens['expires_in'] - 60);
+        return time() >= ($tokens['expires_at'] - 60);
     }
 
     /**
@@ -315,10 +303,14 @@ class OAuthClient
      */
     public function saveTokens(array $tokens): void
     {
-        file_put_contents(
-            $this->tokenFile,
-            json_encode($tokens, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
-        );
+        $created = $tokens['server_time'] ?? $tokens['createdAt'] ?? time();
+
+        $this->storage->saveToken([
+            'client_id'    => $this->config['clientId'],
+            'access_token' => $tokens['access_token'],
+            'refresh_token' => $tokens['refresh_token'],
+            'expires_at'   => $created + $tokens['expires_in'],
+        ]);
     }
 
     /**
@@ -486,9 +478,7 @@ class OAuthClient
      */
     public function logout(): void
     {
-        if (file_exists($this->tokenFile)) {
-            unlink($this->tokenFile);
-        }
+        $this->storage->clearToken();
     }
 
     /**
@@ -990,7 +980,9 @@ class OAuthClient
 
                 // Парсинг пути: "a.0.b" или "a[0][b]" → ['a',0,'b']
                 $path = array_map(
-                    function($p) { return is_numeric($p) ? (int)$p : $p; },
+                    function ($p) {
+                        return is_numeric($p) ? (int)$p : $p;
+                    },
                     explode('.', str_replace(['][', '[', ']'], ['.', '.', ''], (string)$field))
                 );
 

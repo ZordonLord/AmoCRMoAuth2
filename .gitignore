@@ -1,3 +1,4 @@
 .env
 /storage/tokens.json
 /storage/error.log
+/data/database.sqlite
