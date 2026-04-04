@@ -3,7 +3,8 @@
 $app = require __DIR__ . '/../bootstrap.php';
 $client = $app['client'];
 
-$action = $_POST['action'] ?? null; // Получаем действие из POST-запроса
+// Получаем действие из POST или GET
+$action = $_POST['action'] ?? $_GET['action'] ?? null;
 
 // Обработка получения кода авторизации
 if (isset($_GET['code'])) {
