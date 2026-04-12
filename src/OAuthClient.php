@@ -14,6 +14,24 @@ class OAuthClient
         $this->storage = $storage;
     }
 
+    // Получаем конфигурацию для текущего пользователя (с учётом возможных переопределений в БД)
+    private function getUserConfig(): array
+    {
+        $userId = $_SESSION['user_id'] ?? null;
+
+        $user = null;
+        if ($userId) {
+            $user = $this->storage->getUser($userId);
+        }
+
+        return [
+            'clientId'     => $user['client_id'] ?? $this->config['clientId'],
+            'clientSecret' => $user['client_secret'] ?? $this->config['clientSecret'],
+            'baseDomain'   => $user['base_domain'] ?? $this->config['baseDomain'],
+            'redirectUri'  => $this->config['redirectUri'],
+        ];
+    }
+
     // Функция для троттлинга запросов (не более 7 запросов в секунду)
     private function throttle(): void
     {
@@ -238,14 +256,20 @@ class OAuthClient
      */
     public function exchangeCodeForTokens(string $code, int $attempts = 2): array
     {
-        $url = "https://{$this->config['baseDomain']}/oauth2/access_token";
+        $config = $this->getUserConfig();
+
+        if (empty($config['clientId']) || empty($config['clientSecret'])) {
+            throw new Exception('OAuth не настроен');
+        }
+
+        $url = "https://{$config['baseDomain']}/oauth2/access_token";
 
         $payload = [
-            'client_id'     => $this->config['clientId'],
-            'client_secret' => $this->config['clientSecret'],
+            'client_id'     => $config['clientId'],
+            'client_secret' => $config['clientSecret'],
             'grant_type'    => 'authorization_code',
             'code'          => $code,
-            'redirect_uri'  => $this->config['redirectUri']
+            'redirect_uri'  => $config['redirectUri']
         ];
 
         $response = $this->sendRequest('POST', $url, $payload, [], false);
@@ -277,14 +301,24 @@ class OAuthClient
      */
     public function loadTokens(): array
     {
-        if (empty($_SESSION['user_id'])) {
+        $userId = $_SESSION['user_id'] ?? null;
+
+        if (!$userId) {
             return [];
         }
 
+        $config = $this->getUserConfig();
+
+        log_error(json_encode([
+            'userId' => $userId,
+            'clientId' => $config['clientId'],
+            'baseDomain' => $config['baseDomain'],
+        ]));
+
         $token = $this->storage->getToken(
-            $_SESSION['user_id'],
-            $this->config['clientId'],
-            $this->config['baseDomain']
+            $userId,
+            $config['clientId'],
+            $config['baseDomain']
         );
 
         return $token ?: [];
@@ -312,12 +346,14 @@ class OAuthClient
      */
     public function saveTokens(array $tokens): void
     {
+        $config = $this->getUserConfig();
+
         $created = $tokens['server_time'] ?? $tokens['createdAt'] ?? time();
 
         $this->storage->saveToken([
             'user_id'       => $_SESSION['user_id'],
-            'client_id'     => $this->config['clientId'],
-            'base_domain'   => $this->config['baseDomain'],
+            'client_id'     => $config['clientId'],
+            'base_domain'   => $config['baseDomain'],
             'access_token'  => $tokens['access_token'],
             'refresh_token' => $tokens['refresh_token'],
             'expires_at'    => $created + $tokens['expires_in'],
@@ -334,14 +370,16 @@ class OAuthClient
      */
     public function refreshToken(array $tokens, int $attempts = 2): array
     {
-        $url = "https://{$this->config['baseDomain']}/oauth2/access_token";
+        $config = $this->getUserConfig();
+
+        $url = "https://{$config['baseDomain']}/oauth2/access_token";
 
         $payload = [
-            'client_id'     => $this->config['clientId'],
-            'client_secret' => $this->config['clientSecret'],
+            'client_id'     => $config['clientId'],
+            'client_secret' => $config['clientSecret'],
             'grant_type'    => 'refresh_token',
             'refresh_token' => $tokens['refresh_token'],
-            'redirect_uri'  => $this->config['redirectUri']
+            'redirect_uri'  => $config['redirectUri']
         ];
 
         try {
@@ -353,7 +391,7 @@ class OAuthClient
                 log_error('Критическая ошибка refresh_token — требуется переавторизация', [
                     'http_code' => $e->getCode(),
                     'response' => $e->getResponse(),
-                    'domain' => $this->config['baseDomain']
+                    'domain' => $config['baseDomain']
                 ]);
 
                 $this->logout();
@@ -438,15 +476,16 @@ class OAuthClient
      */
     public function getAccountInfo(): array
     {
-        $url = "https://{$this->config['baseDomain']}/api/v4/account";
+        $config = $this->getUserConfig();
+        $url = "https://{$config['baseDomain']}/api/v4/account";
 
         return $this->sendRequest('GET', $url);
     }
 
     /**
-     * Функция проверки, авторизован ли пользователь (есть ли валидные токены доступа)
+     * Функция проверки, авторизован ли пользователь
      *
-     * @return boolean - true, если пользователь авторизован и токены доступа валидны, иначе false
+     * @return bool
      */
     public function isAuthorized(): bool
     {
@@ -471,7 +510,9 @@ class OAuthClient
     public function renderAuthButton(): string
     {
         $isAuthorized = $this->isAuthorized();
-        $clientId = $this->config['clientId'];
+        $config = $this->getUserConfig();
+        $clientId = $config['clientId'];
+        $state = $_SESSION['user_id'];
 
         ob_start();
         require __DIR__ . '/../views/auth_button.php';
@@ -485,10 +526,18 @@ class OAuthClient
      */
     public function logout(): void
     {
+        $userId = $_SESSION['user_id'] ?? null;
+
+        if (!$userId) {
+            return;
+        }
+
+        $config = $this->getUserConfig();
+
         $this->storage->clearToken(
-            $_SESSION['user_id'],
-            $this->config['clientId'],
-            $this->config['baseDomain']
+            $userId,
+            $config['clientId'],
+            $config['baseDomain']
         );
     }
 
@@ -499,7 +548,8 @@ class OAuthClient
      */
     public function getContactFields(): array
     {
-        $domain = $this->config['baseDomain'];
+        $config = $this->getUserConfig();
+        $domain = $config['baseDomain'];
 
         $url = "https://{$domain}/api/v4/contacts/custom_fields";
 
@@ -515,7 +565,8 @@ class OAuthClient
      */
     public function getLeadFields(): array
     {
-        $domain = $this->config['baseDomain'];
+        $config = $this->getUserConfig();
+        $domain = $config['baseDomain'];
 
         $url = "https://{$domain}/api/v4/leads/custom_fields";
 
@@ -533,7 +584,8 @@ class OAuthClient
      */
     public function getContacts(int $limit = 50, int $page = 1): array
     {
-        $domain = $this->config['baseDomain'];
+        $config = $this->getUserConfig();
+        $domain = $config['baseDomain'];
 
         $url = "https://{$domain}/api/v4/contacts?page={$page}&limit={$limit}";
 
@@ -840,7 +892,9 @@ class OAuthClient
      */
     public function getLeads(int $limit = 50, int $page = 1): array
     {
-        $domain = $this->config['baseDomain'];
+        $config = $this->getUserConfig();
+
+        $domain = $config['baseDomain'];
 
         $url = "https://{$domain}/api/v4/leads?page={$page}&limit={$limit}";
 
@@ -858,9 +912,11 @@ class OAuthClient
      */
     public function addContact(array $contact, int $attempts = 4): array
     {
+        $config = $this->getUserConfig();
+
         return $this->addEntityWithTypeRetry(
             $contact,
-            "https://{$this->config['baseDomain']}/api/v4/contacts",
+            "https://{$config['baseDomain']}/api/v4/contacts",
             'contact',
             $attempts
         );
@@ -875,9 +931,11 @@ class OAuthClient
      */
     public function addLead(array $lead, int $attempts = 4): array
     {
+        $config = $this->getUserConfig();
+
         return $this->addEntityWithTypeRetry(
             $lead,
-            "https://{$this->config['baseDomain']}/api/v4/leads",
+            "https://{$config['baseDomain']}/api/v4/leads",
             'lead',
             $attempts
         );

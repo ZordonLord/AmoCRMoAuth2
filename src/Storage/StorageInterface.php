@@ -8,4 +8,6 @@ interface StorageInterface
     public function saveCache(string $key, array $data, int $ttl): void;
     public function getCache(string $key): ?array;
     public function clearToken(string $userId, string $clientId, string $baseDomain): void;
+    public function saveUser(array $userData): void;
+    public function getUser(string $id): ?array;
 }

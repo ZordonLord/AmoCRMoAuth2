@@ -15,9 +15,12 @@ CREATE TABLE IF NOT EXISTS tokens (
 );
 
 CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY,
+    id TEXT PRIMARY KEY,
     name TEXT,
     email TEXT,
+    client_id TEXT,
+    client_secret TEXT,
+    base_domain TEXT,
     updated_at INTEGER
 );
 

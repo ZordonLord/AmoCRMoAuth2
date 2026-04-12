@@ -13,6 +13,7 @@ session_start();
 if (empty($_SESSION['user_id'])) {
     $_SESSION['user_id'] = bin2hex(random_bytes(16));
 }
+
 // Генерируем уникальный ID для каждого запроса для удобства логирования
 $GLOBALS['REQUEST_ID'] = bin2hex(random_bytes(4));
 

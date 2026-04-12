@@ -33,6 +33,18 @@ class SqliteStorage implements StorageInterface
                 UNIQUE(user_id, client_id, base_domain)
             );
         ");
+        // Таблица пользователей
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                email TEXT,
+                client_id TEXT,
+                client_secret TEXT,
+                base_domain TEXT,
+                updated_at INTEGER
+            );
+        ");
 
         // Таблица кэша
         $this->db->exec("
@@ -100,8 +112,11 @@ class SqliteStorage implements StorageInterface
     /**
      * Удаление токена
      */
-    public function clearToken(string $userId, string $clientId, string $baseDomain): void
-    {
+    public function clearToken(
+        string $userId,
+        string $clientId,
+        string $baseDomain
+    ): void {
         $stmt = $this->db->prepare("
         DELETE FROM tokens
         WHERE user_id = :user_id
@@ -114,6 +129,54 @@ class SqliteStorage implements StorageInterface
             ':client_id' => $clientId,
             ':base_domain' => $baseDomain
         ]);
+    }
+
+    /**
+     * Сохранение пользователя
+     */
+    public function saveUser(array $userData): void
+    {
+        $stmt = $this->db->prepare("
+        INSERT INTO users (id, name, email, client_id, client_secret, base_domain, updated_at)
+        VALUES (:id, :name, :email, :client_id, :client_secret, :base_domain, :updated_at)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            email = excluded.email,
+            client_id = excluded.client_id,
+            client_secret = excluded.client_secret,
+            base_domain = excluded.base_domain,
+            updated_at = excluded.updated_at
+    ");
+
+        $success = $stmt->execute([
+            ':id'            => $userData['id'],
+            ':name'          => $userData['name'] ?? null,
+            ':email'         => $userData['email'] ?? null,
+            ':client_id'     => $userData['client_id'] ?? null,
+            ':client_secret' => $userData['client_secret'] ?? null,
+            ':base_domain'   => $userData['base_domain'] ?? null,
+            ':updated_at'    => $userData['updated_at'] ?? time()
+        ]);
+
+        if (!$success) {
+            throw new Exception('Failed to save user');
+        }
+    }
+
+    /**
+     * Получение пользователя по ID
+     */
+    public function getUser(string $id): ?array
+    {
+        $stmt = $this->db->prepare("
+        SELECT * FROM users WHERE id = :id LIMIT 1
+    ");
+
+        $stmt->execute([':id' => $id]);
+
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $user ?: null;
     }
 
     /**

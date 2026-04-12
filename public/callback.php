@@ -223,10 +223,7 @@ if ($isAuthorized) {
             <a href="index.php" class="btn">Вернуться на главную страницу</a>
             <br><br>
 
-            <form action="auth.php" method="post">
-                <input type="hidden" name="action" value="forceRefresh">
-                <button type="submit" class="btn">Обновить токен</button>
-            </form>
+            <a href="auth.php?action=forceRefresh" class="btn">Обновить токен</a>
 
             <br>
 
