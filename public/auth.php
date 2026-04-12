@@ -81,18 +81,24 @@ if (isset($_GET['code'])) {
         }
 
         // проверка client_id
-        if (
-            !empty($_GET['client_id']) &&
-            $user['client_id'] !== $_GET['client_id']
-        ) {
-            throw new Exception('client_id mismatch');
+        if (!empty($_GET['client_id'])) {
+
+            if ($user['client_id'] !== $_GET['client_id']) {
+
+                $user['client_id'] = $_GET['client_id'];
+
+                $storage->saveUser([
+                    'id'            => $user['id'],
+                    'client_id'     => $user['client_id'],
+                    'client_secret' => $user['client_secret'],
+                    'base_domain'   => $user['base_domain'],
+                    'updated_at'    => time(),
+                ]);
+            }
         }
 
         // обновить домен если пусто
-        if (
-            empty($user['base_domain']) &&
-            !empty($_GET['referer'])
-        ) {
+        if (!empty($_GET['referer'])) {
             $user['base_domain'] = trim($_GET['referer']);
 
             $storage->saveUser([

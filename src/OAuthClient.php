@@ -309,12 +309,6 @@ class OAuthClient
 
         $config = $this->getUserConfig();
 
-        log_error(json_encode([
-            'userId' => $userId,
-            'clientId' => $config['clientId'],
-            'baseDomain' => $config['baseDomain'],
-        ]));
-
         $token = $this->storage->getToken(
             $userId,
             $config['clientId'],
