@@ -7,6 +7,7 @@ class OAuthClient
     private $storage;
     private $requestsInCurrentSecond = 0; // счётчик запросов для троттлинга
     private $currentSecond = 0; // текущая секунда для троттлинга
+    private $forcedUserId = null;
 
     public function __construct(array $config, StorageInterface $storage)
     {
@@ -17,7 +18,7 @@ class OAuthClient
     // Получаем конфигурацию для текущего пользователя (с учётом возможных переопределений в БД)
     private function getUserConfig(): array
     {
-        $userId = $_SESSION['user_id'] ?? null;
+        $userId = $this->forcedUserId ?? ($_SESSION['user_id'] ?? null);
 
         $user = null;
         if ($userId) {
@@ -301,7 +302,7 @@ class OAuthClient
      */
     public function loadTokens(): array
     {
-        $userId = $_SESSION['user_id'] ?? null;
+        $userId = $this->forcedUserId ?? ($_SESSION['user_id'] ?? null);
 
         if (!$userId) {
             return [];
@@ -345,7 +346,7 @@ class OAuthClient
         $created = $tokens['server_time'] ?? $tokens['createdAt'] ?? time();
 
         $this->storage->saveToken([
-            'user_id'       => $_SESSION['user_id'],
+            'user_id' => $this->forcedUserId ?? ($_SESSION['user_id'] ?? null),
             'client_id'     => $config['clientId'],
             'base_domain'   => $config['baseDomain'],
             'access_token'  => $tokens['access_token'],
@@ -520,7 +521,7 @@ class OAuthClient
      */
     public function logout(): void
     {
-        $userId = $_SESSION['user_id'] ?? null;
+        $userId = $this->forcedUserId ?? ($_SESSION['user_id'] ?? null);
 
         if (!$userId) {
             return;
@@ -1240,5 +1241,123 @@ class OAuthClient
             'index' => $index
         ]);
         return true;
+    }
+
+    public function setUserContext(string $userId): void
+    {
+        $this->forcedUserId = trim($userId);
+    }
+
+    /**
+     * Добавление заметок
+     *
+     * @param integer $contactId - ID контакта, к которому нужно добавить заметку
+     * @param string $text - текст заметки
+     * @return array - массив с ответом от сервера после добавления заметки
+     */
+    public function addContactNote(int $contactId, string $text): array
+    {
+        $config = $this->getUserConfig();
+
+        $url = "https://{$config['baseDomain']}/api/v4/contacts/notes";
+
+        return $this->sendRequest('POST', $url, [[
+            'entity_id' => $contactId,
+            'note_type' => 'common',
+            'params' => [
+                'text' => $text
+            ]
+        ]]);
+    }
+
+    public function findDuplicatesForNewContact(int $contactId): array
+    {
+        if ($contactId <= 0) {
+            return [];
+        }
+
+        $contacts = $this->getAllContacts();
+
+        $newContact = null;
+
+        foreach ($contacts as $contact) {
+            if ((int)($contact['id'] ?? 0) === $contactId) {
+                $newContact = $contact;
+                break;
+            }
+        }
+
+        if (!$newContact) {
+            return [];
+        }
+
+        $duplicates = [];
+
+        foreach (($newContact['custom_fields_values'] ?? []) as $field) {
+
+            $fieldId = (int)($field['field_id'] ?? 0);
+            $fieldName = trim((string)($field['field_name'] ?? 'Поле #' . $fieldId));
+
+            if ($fieldId <= 0) {
+                continue;
+            }
+
+            foreach (($field['values'] ?? []) as $valueItem) {
+
+                $rawValue = trim((string)($valueItem['value'] ?? ''));
+
+                if ($rawValue === '') {
+                    continue;
+                }
+
+                $normalized = $this->normalizeDuplicateCustomValue($rawValue);
+
+                if ($normalized === '') {
+                    continue;
+                }
+
+                foreach ($contacts as $contact) {
+
+                    $otherId = (int)($contact['id'] ?? 0);
+
+                    if ($otherId <= 0 || $otherId === $contactId) {
+                        continue;
+                    }
+
+                    foreach (($contact['custom_fields_values'] ?? []) as $otherField) {
+
+                        if ((int)($otherField['field_id'] ?? 0) !== $fieldId) {
+                            continue;
+                        }
+
+                        foreach (($otherField['values'] ?? []) as $otherValueItem) {
+
+                            $otherRaw = trim((string)($otherValueItem['value'] ?? ''));
+
+                            if ($otherRaw === '') {
+                                continue;
+                            }
+
+                            $otherNormalized = $this->normalizeDuplicateCustomValue($otherRaw);
+
+                            if ($otherNormalized === $normalized) {
+
+                                $duplicates[] = [
+                                    'field_id' => $fieldId,
+                                    'field_name' => $fieldName,
+                                    'field_value' => $rawValue,
+                                    'id' => $otherId,
+                                    'name' => $contact['name'] ?? 'Без имени',
+                                ];
+
+                                break 2;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return $duplicates;
     }
 }

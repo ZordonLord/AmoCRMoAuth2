@@ -180,6 +180,27 @@ class SqliteStorage implements StorageInterface
     }
 
     /**
+     * Получение пользователя по домену
+     */
+    public function getUserByBaseDomain(string $baseDomain): ?array
+    {
+        $stmt = $this->db->prepare("
+        SELECT * 
+        FROM users
+        WHERE base_domain = :base_domain
+        LIMIT 1
+    ");
+
+        $stmt->execute([
+            ':base_domain' => trim($baseDomain),
+        ]);
+
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $user ?: null;
+    }
+
+    /**
      * Сохранение кэша
      */
     public function saveCache(string $key, array $data, int $ttl): void
