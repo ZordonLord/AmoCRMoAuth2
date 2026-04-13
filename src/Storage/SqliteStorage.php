@@ -50,9 +50,15 @@ class SqliteStorage implements StorageInterface
         $this->db->exec("
             CREATE TABLE IF NOT EXISTS cache (
                 key TEXT PRIMARY KEY,
+                user_id TEXT,
                 value TEXT NOT NULL,
                 expires_at INTEGER NOT NULL
             );
+        ");
+
+        $this->db->exec("
+            CREATE INDEX IF NOT EXISTS idx_cache_user_id
+                ON cache(user_id);
         ");
     }
 
@@ -203,18 +209,24 @@ class SqliteStorage implements StorageInterface
     /**
      * Сохранение кэша
      */
-    public function saveCache(string $key, array $data, int $ttl): void
-    {
+    public function saveCache(
+        string $key,
+        array $data,
+        int $ttl,
+        ?string $userId = null
+    ): void {
         $stmt = $this->db->prepare("
-            INSERT INTO cache (key, value, expires_at)
-            VALUES (:key, :value, :expires_at)
+            INSERT INTO cache (key, user_id, value, expires_at)
+            VALUES (:key, :user_id, :value, :expires_at)
             ON CONFLICT(key) DO UPDATE SET
+                user_id = excluded.user_id,
                 value = excluded.value,
                 expires_at = excluded.expires_at
         ");
 
         $success = $stmt->execute([
             ':key' => $key,
+            ':user_id' => $userId,
             ':value' => json_encode($data, JSON_UNESCAPED_UNICODE),
             ':expires_at' => time() + $ttl
         ]);
@@ -230,10 +242,15 @@ class SqliteStorage implements StorageInterface
     public function getCache(string $key): ?array
     {
         $stmt = $this->db->prepare("
-            SELECT value, expires_at FROM cache WHERE key = :key
+            SELECT value, expires_at
+            FROM cache
+            WHERE key = :key
+            LIMIT 1
         ");
 
-        $stmt->execute([':key' => $key]);
+        $stmt->execute([
+            ':key' => $key
+        ]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -241,8 +258,15 @@ class SqliteStorage implements StorageInterface
             return null;
         }
 
-        // Проверка TTL
         if ((int)$row['expires_at'] < time()) {
+
+            $this->db->prepare("
+                DELETE FROM cache
+                WHERE key = :key
+            ")->execute([
+                ':key' => $key
+            ]);
+
             return null;
         }
 
@@ -252,7 +276,7 @@ class SqliteStorage implements StorageInterface
     }
 
     /**
-     * Очистка просроченного кэша (опционально)
+     * Очистка просроченного кэша
      */
     public function clearExpiredCache(): void
     {
@@ -260,6 +284,25 @@ class SqliteStorage implements StorageInterface
             DELETE FROM cache WHERE expires_at < :time
         ")->execute([
             ':time' => time()
+        ]);
+    }
+
+    /**
+     * Очистка кэша пользователя
+     */
+    public function clearUserCache(?string $userId): void
+    {
+        if (!$userId) {
+            return;
+        }
+
+        $stmt = $this->db->prepare("
+            DELETE FROM cache
+            WHERE user_id = :user_id
+        ");
+
+        $stmt->execute([
+            ':user_id' => $userId
         ]);
     }
 }

@@ -25,8 +25,6 @@ try {
         throw new Exception('Некорректный webhook payload');
     }
 
-    log_error('Webhook payload', $payload);
-
     // ID нового контакта
     $contactId = (int)($payload['contacts']['add'][0]['id'] ?? 0);
 
@@ -41,7 +39,7 @@ try {
         throw new Exception('Домен amoCRM не найден');
     }
 
-    // нормализация домена: https://zordonlord6.amocrm.ru -> zordonlord6.amocrm.ru
+    // нормализация домена - удаляем протокол и слеши
     $baseDomain = preg_replace('#^https?://#', '', $baseDomain);
     $baseDomain = trim($baseDomain, '/');
 
@@ -54,6 +52,9 @@ try {
 
     // переключаем OAuth контекст на нужного пользователя
     $client->setUserContext($user['id']);
+
+    // очищаем кэш этого amoCRM аккаунта
+    $storage->clearUserCache($user['id']);
 
     // ищем дубли по всем заполненным полям нового контакта
     $duplicates = $client->findDuplicatesForNewContact($contactId);
@@ -89,11 +90,6 @@ try {
         $text = implode("\n", $lines);
 
         $client->addContactNote($contactId, $text);
-
-        log_error('Найдены дубли', [
-            'contact_id' => $contactId,
-            'duplicates' => $duplicates
-        ]);
     }
 
     http_response_code(200);

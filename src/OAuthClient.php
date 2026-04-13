@@ -543,6 +543,14 @@ class OAuthClient
      */
     public function getContactFields(): array
     {
+        $cacheKey = $this->getCacheKey('contact_fields');
+
+        $cached = $this->storage->getCache($cacheKey);
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
         $config = $this->getUserConfig();
         $domain = $config['baseDomain'];
 
@@ -550,7 +558,16 @@ class OAuthClient
 
         $response = $this->sendRequest('GET', $url);
 
-        return $response['_embedded']['custom_fields'] ?? [];
+        $result = $response['_embedded']['custom_fields'] ?? [];
+
+        $this->storage->saveCache(
+            $cacheKey,
+            $result,
+            3600,
+            $this->getCurrentUserId()
+        );
+
+        return $result;
     }
 
     /**
@@ -579,6 +596,14 @@ class OAuthClient
      */
     public function getContacts(int $limit = 50, int $page = 1): array
     {
+        $cacheKey = $this->getCacheKey("contacts_page_{$page}");
+
+        $cached = $this->storage->getCache($cacheKey);
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
         $config = $this->getUserConfig();
         $domain = $config['baseDomain'];
 
@@ -586,7 +611,16 @@ class OAuthClient
 
         $response = $this->sendRequest('GET', $url);
 
-        return $response['_embedded']['contacts'] ?? [];
+        $result = $response['_embedded']['contacts'] ?? [];
+
+        $this->storage->saveCache(
+            $cacheKey,
+            $result,
+            60,
+            $this->getCurrentUserId()
+        );
+
+        return $result;
     }
 
     /**
@@ -597,6 +631,14 @@ class OAuthClient
      */
     public function getAllContacts(int $limit = 250): array
     {
+        $cacheKey = $this->getCacheKey("all_contacts_{$limit}");
+
+        $cached = $this->storage->getCache($cacheKey);
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
         $allContacts = [];
         $page = 1;
 
@@ -615,6 +657,13 @@ class OAuthClient
 
             $page++;
         }
+
+        $this->storage->saveCache(
+            $cacheKey,
+            $allContacts,
+            60,
+            $this->getCurrentUserId()
+        );
 
         return $allContacts;
     }
@@ -1243,9 +1292,29 @@ class OAuthClient
         return true;
     }
 
+    /**
+     * Позволяет принудительно установить контекст пользователя
+     *
+     * @param string $userId
+     * @return void
+     */
     public function setUserContext(string $userId): void
     {
         $this->forcedUserId = trim($userId);
+    }
+
+    // Получение текущего ID пользователя
+    private function getCurrentUserId(): ?string
+    {
+        return $this->forcedUserId ?? ($_SESSION['user_id'] ?? null);
+    }
+
+    // Генерация ключа для кэширования на основе ID пользователя и произвольного ключа
+    private function getCacheKey(string $key): string
+    {
+        $userId = $this->getCurrentUserId() ?? 'guest';
+
+        return md5($userId . '|' . $key);
     }
 
     /**
