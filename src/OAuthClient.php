@@ -1429,4 +1429,62 @@ class OAuthClient
 
         return $duplicates;
     }
+
+    /**
+     * Генерация тестовых контактов для проверки на дубли
+     *
+     * @param integer $count - количество контактов для генерации
+     * @return void
+     */
+    public function generateMassTestContacts(int $count): void
+    {
+        $batchSize = 50;
+        $maxRps = 7;
+        $interval = (int)ceil(1000000 / $maxRps);
+
+        $start = time();
+
+        for ($offset = 0; $offset < $count; $offset += $batchSize) {
+
+            $batch = [];
+            $current = min($batchSize, $count - $offset);
+
+            for ($i = 1; $i <= $current; $i++) {
+
+                $num = $start + $offset + $i;
+
+                $batch[] = [
+                    'name' => 'Контакт #' . $num,
+                    'custom_fields_values' => [
+                        [
+                            'field_code' => 'PHONE',
+                            'values' => [[
+                                'value' => '+79' . substr((string)$num, -9),
+                                'enum_code' => 'WORK'
+                            ]]
+                        ],
+                        [
+                            'field_code' => 'EMAIL',
+                            'values' => [[
+                                'value' => 'test' . $num . '@testmail.ru',
+                                'enum_code' => 'WORK'
+                            ]]
+                        ]
+                    ]
+                ];
+            }
+
+            $this->addContact($batch);
+
+            $done = $offset + $current;
+
+            echo "Создано: {$done} / {$count}<br>";
+            @ob_flush();
+            @flush();
+
+            usleep($interval);
+        }
+
+        $this->storage->clearUserCache($this->getCurrentUserId());
+    }
 }
