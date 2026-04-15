@@ -62,7 +62,7 @@ try {
     if (!empty($duplicates)) {
 
         $lines = [];
-        $lines[] = 'Обнаружены возможные дубли:';
+        $lines[] = 'Обнаружены дубли:';
         $lines[] = '';
 
         $uniqueLines = [];

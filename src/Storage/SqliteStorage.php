@@ -5,7 +5,10 @@
  */
 class SqliteStorage implements StorageInterface
 {
-    private PDO $db;
+    /**
+     * @var PDO
+     */
+    private $db;
 
     public function __construct(string $path)
     {
