@@ -70,6 +70,38 @@ class MysqlStorage implements StorageInterface
                 KEY idx_cache_expires (expires_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         ");
+
+        $this->migrate();
+    }
+
+    private function migrate(): void
+    {
+        $this->addColumnIfNotExists('users', 'duplicate_check_fields', 'TEXT');
+    }
+
+    private function addColumnIfNotExists(string $table, string $column, string $definition): void
+    {
+        $stmt = $this->db->prepare("
+        SELECT COUNT(*) 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = :table
+          AND COLUMN_NAME = :column
+    ");
+
+        $stmt->execute([
+            ':table' => $table,
+            ':column' => $column
+        ]);
+
+        $exists = (int)$stmt->fetchColumn() > 0;
+
+        if (!$exists) {
+            $this->db->exec("
+            ALTER TABLE {$table}
+            ADD COLUMN {$column} {$definition}
+        ");
+        }
     }
 
     /**
@@ -336,5 +368,53 @@ class MysqlStorage implements StorageInterface
         $stmt->execute([
             ':user_id' => $userId,
         ]);
+    }
+
+    /**
+     * Сохранение полей для проверки дубликатов
+     */
+    public function saveDuplicateCheckFields(string $userId, array $fields): void
+    {
+        $fields = array_values(array_unique(array_filter($fields)));
+
+        $json = json_encode($fields, JSON_UNESCAPED_UNICODE);
+
+        $stmt = $this->db->prepare("
+        UPDATE users
+        SET duplicate_check_fields = :fields
+        WHERE id = :id
+    ");
+
+        $stmt->execute([
+            ':fields' => $json,
+            ':id' => $userId
+        ]);
+    }
+
+    /**
+     * Получение полей для проверки дубликатов
+     */
+    public function getDuplicateCheckFields(string $userId): array
+    {
+        $stmt = $this->db->prepare("
+        SELECT duplicate_check_fields
+        FROM users
+        WHERE id = :id
+        LIMIT 1
+    ");
+
+        $stmt->execute([
+            ':id' => $userId
+        ]);
+
+        $row = $stmt->fetch();
+
+        if (!$row || empty($row['duplicate_check_fields'])) {
+            return [];
+        }
+
+        $data = json_decode($row['duplicate_check_fields'], true);
+
+        return is_array($data) ? $data : [];
     }
 }

@@ -16,6 +16,42 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
+function formatDuplicateValueForDisplay(string $value, string $fieldTypeRaw, string $fieldLabel): string
+{
+    $valueTrim = trim($value);
+    if ($valueTrim === '') {
+        return $valueTrim;
+    }
+
+    $fieldType = strtolower(trim($fieldTypeRaw));
+    $labelLower = function_exists('mb_strtolower') ? mb_strtolower(trim($fieldLabel), 'UTF-8') : strtolower(trim($fieldLabel));
+    $looksLikeTimestamp = preg_match('/^\d+$/', $valueTrim) === 1;
+
+    $isDate =
+        $fieldType !== '' && (strpos($fieldType, 'date') !== false || strpos($fieldType, 'datetime') !== false || strpos($fieldType, 'time') !== false);
+
+    if (!$isDate && ($labelLower !== '' && (strpos($labelLower, 'дата') !== false || strpos($labelLower, 'date') !== false))) {
+        $isDate = true;
+    }
+
+    if (!$isDate || !$looksLikeTimestamp) {
+        return $valueTrim;
+    }
+
+    try {
+        $dt = new DateTime('@' . $valueTrim);
+        $dt->setTimezone(new DateTimeZone('Europe/Moscow'));
+
+        if (strpos($fieldType, 'datetime') !== false || strpos($fieldType, 'time') !== false || strpos($labelLower, 'врем') !== false) {
+            return $dt->format('d.m.Y H:i');
+        }
+
+        return $dt->format('d.m.Y');
+    } catch (Throwable $e) {
+        return $valueTrim;
+    }
+}
+
 try {
     $payload = !empty($_POST)
         ? $_POST
@@ -50,14 +86,26 @@ try {
         throw new Exception("Пользователь для домена {$baseDomain} не найден");
     }
 
+    $cacheKey = 'webhook_processed_' . $contactId;
+
+    $alreadyProcessed = $storage->getCache($cacheKey);
+
+    if ($alreadyProcessed) {
+        http_response_code(200);
+        echo json_encode(['success' => true, 'skipped' => true]);
+        exit;
+    }
+
     // переключаем OAuth контекст на нужного пользователя
     $client->setUserContext($user['id']);
 
     // очищаем кэш этого amoCRM аккаунта
     $storage->clearUserCache($user['id']);
 
-    // ищем дубли по всем заполненным полям нового контакта
-    $duplicates = $client->findDuplicatesForNewContact($contactId);
+    // ищем дубли для нового контакта по выбранным полям
+    $selectedFields = $storage->getDuplicateCheckFields($user['id']);
+
+    $duplicates = $client->findDuplicatesForNewContact($contactId, $selectedFields);
 
     if (!empty($duplicates)) {
 
@@ -70,7 +118,14 @@ try {
         foreach ($duplicates as $item) {
 
             $fieldName = trim((string)($item['field_name'] ?? 'Поле'));
-            $fieldValue = trim((string)($item['field_value'] ?? ''));
+            $fieldValueRaw = trim((string)($item['field_value'] ?? ''));
+
+            $fieldValue = formatDuplicateValueForDisplay(
+                $fieldValueRaw,
+                (string)($item['field_type'] ?? ''),
+                (string)($item['field_name'] ?? '')
+            );
+
             $duplicateName = trim((string)($item['name'] ?? 'Без имени'));
             $duplicateId = (int)($item['id'] ?? 0);
 
@@ -80,7 +135,9 @@ try {
                 $line .= ": {$fieldValue}";
             }
 
-            $line .= " → {$duplicateName} (ID: {$duplicateId})";
+            $link = "https://{$baseDomain}/contacts/detail/{$duplicateId}";
+
+            $line .= " → {$duplicateName} {$link}";
 
             $uniqueLines[$line] = true;
         }
@@ -90,6 +147,8 @@ try {
         $text = implode("\n", $lines);
 
         $client->addContactNote($contactId, $text);
+
+        $storage->saveCache($cacheKey, ['done' => true], 300, $user['id']);
     }
 
     http_response_code(200);

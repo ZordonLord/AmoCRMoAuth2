@@ -14,4 +14,7 @@ interface StorageInterface
     public function saveCache(string $key, array $data, int $ttl, ?string $userId = null): void;
     public function getCache(string $key): ?array;
     public function clearUserCache(?string $userId): void;
+
+    public function saveDuplicateCheckFields(string $userId, array $fields): void;
+    public function getDuplicateCheckFields(string $userId): array;
 }

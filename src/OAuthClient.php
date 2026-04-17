@@ -1339,7 +1339,7 @@ class OAuthClient
         ]]);
     }
 
-    public function findDuplicatesForNewContact(int $contactId): array
+    public function findDuplicatesForNewContact(int $contactId, array $allowedFields = []): array
     {
         if ($contactId <= 0) {
             return [];
@@ -1365,6 +1365,21 @@ class OAuthClient
         foreach (($newContact['custom_fields_values'] ?? []) as $field) {
 
             $fieldId = (int)($field['field_id'] ?? 0);
+            $fieldKey = 'CUSTOM:' . $fieldId;
+
+            $fieldCode = strtoupper(trim((string)($field['field_code'] ?? '')));
+
+            if ($fieldCode === 'PHONE') {
+                $fieldKey = 'SYSTEM:PHONE';
+            }
+
+            if ($fieldCode === 'EMAIL') {
+                $fieldKey = 'SYSTEM:EMAIL';
+            }
+
+            if (!empty($allowedFields) && !in_array($fieldKey, $allowedFields, true)) {
+                continue;
+            }
             $fieldName = trim((string)($field['field_name'] ?? 'Поле #' . $fieldId));
 
             if ($fieldId <= 0) {
@@ -1411,10 +1426,13 @@ class OAuthClient
 
                             if ($otherNormalized === $normalized) {
 
+                                $fieldType = (string)($field['field_type'] ?? $field['type'] ?? '');
+
                                 $duplicates[] = [
                                     'field_id' => $fieldId,
                                     'field_name' => $fieldName,
                                     'field_value' => $rawValue,
+                                    'field_type' => $fieldType,
                                     'id' => $otherId,
                                     'name' => $contact['name'] ?? 'Без имени',
                                 ];
@@ -1428,6 +1446,16 @@ class OAuthClient
         }
 
         return $duplicates;
+    }
+
+    /**
+     * Получение ID текущего авторизованного пользователя
+     *
+     * @return string|null - ID текущего пользователя или null, если пользователь не авторизован
+     */
+    public function getCurrentAuthorizedUserId(): ?string
+    {
+        return $this->getCurrentUserId();
     }
 
     /**

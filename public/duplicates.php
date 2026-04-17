@@ -2,6 +2,7 @@
 
 $app = require __DIR__ . '/../bootstrap.php';
 $client = $app['client'];
+$storage = $app['storage'];
 
 function e($value): string
 {
@@ -21,6 +22,8 @@ $fieldsError = null;
 $customFieldsById = [];
 $customFieldsCount = 0;
 $customFieldTypesById = [];
+$settingsSaved = false;
+$autoCheckError = null;
 
 if ($isAuthorized) {
     try {
@@ -83,8 +86,71 @@ if ($isAuthorized) {
         }
 
         $customFieldsCount = count($customFieldsById);
+
+        $savedAutoDuplicateFields = [];
+
+        try {
+            if ($isAuthorized) {
+                $userId = $client->getCurrentAuthorizedUserId();
+
+                if ($userId) {
+                    $savedAutoDuplicateFields = $storage->getDuplicateCheckFields($userId);
+                }
+            }
+        } catch (Throwable $e) {
+        }
     } catch (Throwable $e) {
         $fieldsError = $e->getMessage();
+    }
+}
+
+// сохранение выбранных полей для авто-проверки при добавлении контакта
+if ($isAuthorized && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_auto_duplicate_fields'])) {
+    try {
+        $userId = $client->getCurrentAuthorizedUserId();
+
+        if (!$userId) {
+            throw new Exception('Не удалось определить пользователя');
+        }
+
+        $selectedAutoFields = $_POST['auto_duplicate_fields'] ?? [];
+
+        if (!is_array($selectedAutoFields)) {
+            $selectedAutoFields = [];
+        }
+
+        $validFields = [];
+
+        foreach ($selectedAutoFields as $fieldKey) {
+            $fieldKey = trim((string)$fieldKey);
+
+            if ($fieldKey === '') {
+                continue;
+            }
+
+            [$kind, $value] = array_pad(explode(':', $fieldKey, 2), 2, null);
+
+            $kind = strtoupper(trim((string)$kind));
+            $value = trim((string)$value);
+
+            if ($kind === 'SYSTEM' && isset($systemFields[strtoupper($value)])) {
+                $validFields[] = 'SYSTEM:' . strtoupper($value);
+            }
+
+            if ($kind === 'CUSTOM' && is_numeric($value)) {
+                $fieldId = (int)$value;
+
+                if ($fieldId > 0 && isset($customFieldsById[$fieldId])) {
+                    $validFields[] = 'CUSTOM:' . $fieldId;
+                }
+            }
+        }
+
+        $storage->saveDuplicateCheckFields($userId, array_unique($validFields));
+
+        $settingsSaved = true;
+    } catch (Throwable $e) {
+        $autoCheckError = $e->getMessage();
     }
 }
 
@@ -197,6 +263,72 @@ if ($isAuthorized && isset($_GET['search'])) {
                 <?= $client->renderAuthButton() ?>
             </div>
         <?php else: ?>
+
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Автопоиск дублей при добавлении контакта</h5>
+                    <p class="text-muted">
+                        Выберите поля, по которым webhook будет автоматически искать дубликаты у нового контакта.
+                    </p>
+
+                    <?php if ($settingsSaved): ?>
+                        <div class="alert alert-success">
+                            Настройки сохранены.
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if ($autoCheckError): ?>
+                        <div class="alert alert-danger">
+                            <?= e($autoCheckError) ?>
+                        </div>
+                    <?php endif; ?>
+
+                    <form method="POST">
+                        <div class="row">
+                            <?php foreach ($systemFields as $code => $label): ?>
+                                <?php $key = 'SYSTEM:' . $code; ?>
+                                <div class="col-md-6 mb-2">
+                                    <div class="form-check">
+                                        <input
+                                            class="form-check-input"
+                                            type="checkbox"
+                                            name="auto_duplicate_fields[]"
+                                            value="<?= e($key) ?>"
+                                            id="<?= e($key) ?>"
+                                            <?= in_array($key, $savedAutoDuplicateFields, true) ? 'checked' : '' ?>>
+                                        <label class="form-check-label" for="<?= e($key) ?>">
+                                            <?= e($label) ?>
+                                        </label>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+
+                            <?php foreach ($customFieldsById as $fieldId => $label): ?>
+                                <?php $key = 'CUSTOM:' . $fieldId; ?>
+                                <div class="col-md-6 mb-2">
+                                    <div class="form-check">
+                                        <input
+                                            class="form-check-input"
+                                            type="checkbox"
+                                            name="auto_duplicate_fields[]"
+                                            value="<?= e($key) ?>"
+                                            id="<?= e($key) ?>"
+                                            <?= in_array($key, $savedAutoDuplicateFields, true) ? 'checked' : '' ?>>
+                                        <label class="form-check-label" for="<?= e($key) ?>">
+                                            <?= e($label) ?>
+                                        </label>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <button type="submit" name="save_auto_duplicate_fields" value="1" class="btn btn-success mt-3">
+                            Сохранить настройки
+                        </button>
+                    </form>
+                </div>
+            </div>
+
             <form method="GET" class="mt-5">
 
                 <label for="field_key" class="form-label">
