@@ -96,6 +96,18 @@ try {
         exit;
     }
 
+    // Быстрый ответ amoCRM, чтобы не держать его в ожидании
+    http_response_code(200);
+    echo json_encode(['success' => true]);
+    @ob_flush();
+    @flush();
+
+    if (function_exists('fastcgi_finish_request')) {
+        set_time_limit(0);
+        ignore_user_abort(true);
+        fastcgi_finish_request();
+    }
+
     // переключаем OAuth контекст на нужного пользователя
     $client->setUserContext($user['id']);
 
@@ -150,25 +162,10 @@ try {
 
         $storage->saveCache($cacheKey, ['done' => true], 300, $user['id']);
     }
-
-    http_response_code(200);
-
-    echo json_encode([
-        'success' => true,
-        'contact_id' => $contactId,
-        'duplicates_found' => count($duplicates)
-    ]);
 } catch (Throwable $e) {
 
     log_error('Ошибка webhook дублей', [
         'message' => $e->getMessage(),
         'trace' => $e->getTraceAsString()
-    ]);
-
-    http_response_code(500);
-
-    echo json_encode([
-        'success' => false,
-        'message' => $e->getMessage()
     ]);
 }
