@@ -10,6 +10,9 @@ return [
     'redirectUri'  => $_ENV['AMO_REDIRECT_URI'],
     'baseDomain'   => $_ENV['AMO_BASE_DOMAIN'],
 
+    // URL для приема webhook от amoCRM
+    'webhookUrl'   => $_ENV['WEBHOOK_URL'],
+
     // SQLite
     'dbPath'       => __DIR__ . '/../data/database.sqlite',
 

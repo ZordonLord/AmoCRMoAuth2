@@ -2,6 +2,7 @@
 $app = require __DIR__ . '/../bootstrap.php';
 $client = $app['client'];
 $storage = $app['storage'];
+$config = $app['config'];
 
 // Безопасный редирект
 function safeRedirect(string $url): void
@@ -112,6 +113,12 @@ if (isset($_GET['code'])) {
 
         $tokens = $client->exchangeCodeForTokens($_GET['code']);
         $client->saveTokens($tokens);
+
+        // Регистрируем вебхук для этого пользователя, если его ещё нет
+        $client->registerWebhook(
+            $config['webhookUrl'],
+            ['add_contact']
+        );
 
         safeRedirect('index.php');
     } catch (Exception $e) {

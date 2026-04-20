@@ -1515,4 +1515,48 @@ class OAuthClient
 
         $this->storage->clearUserCache($this->getCurrentUserId());
     }
+
+    /**
+     * Регистрирует вебхук, если его ещё нет
+     *
+     * @param string $url - URL для регистрации вебхука
+     * @param array $events - массив событий для регистрации (например, ['add_contact'])
+     * @return void
+     */
+    public function registerWebhook(string $url, array $events): void
+    {
+        if (!$url || empty($events)) {
+            return;
+        }
+
+        $config = $this->getUserConfig();
+        $domain = $config['baseDomain'];
+
+        $apiUrl = "https://{$domain}/api/v4/webhooks";
+
+        // получаем текущие вебхуки
+        $response = $this->sendRequest('GET', $apiUrl);
+        $existingHooks = $response['_embedded']['webhooks'] ?? [];
+
+        sort($events);
+
+        foreach ($existingHooks as $hook) {
+
+            $existingUrl = trim((string)($hook['destination'] ?? ''));
+            $existingEvents = $hook['settings'] ?? [];
+
+            sort($existingEvents);
+
+            // если уже есть такой webhook — ничего не делаем
+            if ($existingUrl === $url && $existingEvents === $events) {
+                return;
+            }
+        }
+
+        // создаём новый webhook
+        $this->sendRequest('POST', $apiUrl, [[
+            'destination' => $url,
+            'settings'    => $events
+        ]]);
+    }
 }
