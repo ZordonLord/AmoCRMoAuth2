@@ -1650,9 +1650,9 @@ class OAuthClient
         }
 
         // создаём новый webhook
-        $this->sendRequest('POST', $apiUrl, [[
+        $this->sendRequest('POST', $apiUrl, [
             'destination' => $url,
             'settings'    => $events
-        ]]);
+        ]);
     }
 }
