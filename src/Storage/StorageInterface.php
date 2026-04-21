@@ -10,6 +10,7 @@ interface StorageInterface
     public function saveUser(array $userData): void;
     public function getUser(string $id): ?array;
     public function getUserByBaseDomain(string $baseDomain): ?array;
+    public function listUsers(): array;
 
     public function saveCache(string $key, array $data, int $ttl, ?string $userId = null): void;
     public function getCache(string $key): ?array;

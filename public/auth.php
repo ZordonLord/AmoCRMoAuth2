@@ -112,6 +112,8 @@ if (isset($_GET['code'])) {
         }
 
         $tokens = $client->exchangeCodeForTokens($_GET['code']);
+        $client->setActiveUserId($userId);
+        $client->clearPendingUserId();
         $client->saveTokens($tokens);
 
         // Регистрируем вебхук для этого пользователя, если его ещё нет
@@ -139,6 +141,20 @@ if (isset($_GET['code'])) {
  */
 
 $action = $_GET['action'] ?? null;
+
+if ($action === 'switchUser') {
+    $selectedUserId = trim((string)($_GET['user_id'] ?? ''));
+
+    if ($selectedUserId === '') {
+        $client->setActiveUserId(null);
+        $client->startNewUserAuthorization();
+    } else {
+        $client->setActiveUserId($selectedUserId);
+        $client->clearPendingUserId();
+    }
+
+    safeRedirect('index.php');
+}
 
 if ($action === 'logout') {
     $client->logout();

@@ -270,6 +270,19 @@ class MysqlStorage implements StorageInterface
         return $user ?: null;
     }
 
+    public function listUsers(): array
+    {
+        $stmt = $this->db->query("
+            SELECT *
+            FROM users
+            ORDER BY updated_at DESC, id DESC
+        ");
+
+        $rows = $stmt->fetchAll();
+
+        return is_array($rows) ? $rows : [];
+    }
+
     /**
      * Сохранение кэша
      */

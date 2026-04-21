@@ -1,18 +1,54 @@
 <?php // Шаблон для отображения кнопки авторизации или выхода в зависимости от состояния авторизации
 if ($isAuthorized): ?>
     <a href="auth.php?action=logout" class="btn">Выйти</a>
+
+    <form method="GET" action="auth.php" style="margin-bottom: 12px;">
+        <input type="hidden" name="action" value="switchUser">
+        <label for="active_user_id">Пользователь:</label>
+        <select name="user_id" id="active_user_id">
+            <option value="">Новый пользователь (новая авторизация)</option>
+            <?php foreach ($users as $user): ?>
+                <?php
+                $uid = (string)($user['id'] ?? '');
+                $name = trim((string)($user['name'] ?? ''));
+                $email = trim((string)($user['email'] ?? ''));
+                $baseDomain = trim((string)($user['base_domain'] ?? ''));
+                $label = $name !== '' ? $name : ($email !== '' ? $email : $uid);
+                if ($baseDomain !== '') {
+                    $label .= " ({$baseDomain})";
+                }
+                ?>
+                <option value="<?= htmlspecialchars($uid) ?>" <?= $activeUserId === $uid ? 'selected' : '' ?>>
+                    <?= htmlspecialchars($label) ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+        <button type="submit" class="btn">Переключить</button>
+    </form>
 <?php else: ?>
-    <script
-        class="amocrm_oauth"
-        charset="utf-8"
-        data-client-id="<?= htmlspecialchars($clientId) ?>"
-        data-title="Авторизоваться через amoCRM"
-        data-compact="false"
-        data-color="default"
-        data-state="state"
-        data-mode="popup"
-        src="https://www.amocrm.ru/auth/button.min.js">
-    </script>
+    <form method="GET" action="auth.php" style="margin-bottom: 12px;">
+        <input type="hidden" name="action" value="switchUser">
+        <label for="active_user_id">Пользователь:</label>
+        <select name="user_id" id="active_user_id">
+            <option value="">Новый пользователь (новая авторизация)</option>
+            <?php foreach ($users as $user): ?>
+                <?php
+                $uid = (string)($user['id'] ?? '');
+                $name = trim((string)($user['name'] ?? ''));
+                $email = trim((string)($user['email'] ?? ''));
+                $baseDomain = trim((string)($user['base_domain'] ?? ''));
+                $label = $name !== '' ? $name : ($email !== '' ? $email : $uid);
+                if ($baseDomain !== '') {
+                    $label .= " ({$baseDomain})";
+                }
+                ?>
+                <option value="<?= htmlspecialchars($uid) ?>" <?= $activeUserId === $uid ? 'selected' : '' ?>>
+                    <?= htmlspecialchars($label) ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+        <button type="submit" class="btn">Переключить</button>
+    </form>
 
     <script
         class="amocrm_oauth"

@@ -3,6 +3,8 @@ require_once __DIR__ . '/HttpException.php';
 
 class OAuthClient
 {
+    private const ACTIVE_USER_COOKIE = 'amo_active_user_id';
+    private const PENDING_USER_COOKIE = 'amo_pending_user_id';
     private $config;
     private $storage;
     private $requestsInCurrentSecond = 0; // счётчик запросов для троттлинга
@@ -18,9 +20,9 @@ class OAuthClient
     // Получаем конфигурацию для текущего пользователя (с учётом возможных переопределений в БД)
     private function getUserConfig(): array
     {
-        $userId = $this->forcedUserId ?? ($_SESSION['user_id'] ?? null);
-
+        $userId = $this->getCurrentUserId();
         $user = null;
+
         if ($userId) {
             $user = $this->storage->getUser($userId);
         }
@@ -30,6 +32,7 @@ class OAuthClient
             'clientSecret' => $user['client_secret'] ?? $this->config['clientSecret'],
             'baseDomain'   => $user['base_domain'] ?? $this->config['baseDomain'],
             'redirectUri'  => $this->config['redirectUri'],
+            'userId'       => $userId,
         ];
     }
 
@@ -302,7 +305,7 @@ class OAuthClient
      */
     public function loadTokens(): array
     {
-        $userId = $this->forcedUserId ?? ($_SESSION['user_id'] ?? null);
+        $userId = $this->getCurrentUserId();
 
         if (!$userId) {
             return [];
@@ -345,8 +348,14 @@ class OAuthClient
 
         $created = $tokens['server_time'] ?? $tokens['createdAt'] ?? time();
 
+        $userId = $this->getCurrentUserId();
+
+        if (!$userId) {
+            throw new Exception('No active user for token saving');
+        }
+
         $this->storage->saveToken([
-            'user_id' => $this->forcedUserId ?? ($_SESSION['user_id'] ?? null),
+            'user_id'       => $userId,
             'client_id'     => $config['clientId'],
             'base_domain'   => $config['baseDomain'],
             'access_token'  => $tokens['access_token'],
@@ -484,17 +493,24 @@ class OAuthClient
      */
     public function isAuthorized(): bool
     {
-        $tokens = $this->loadTokens();
+        $userId = $this->getCurrentUserId();
 
-        if (empty($tokens['access_token'])) {
+        if (!$userId) {
             return false;
         }
 
-        if (empty($tokens['expires_at'])) {
+        $tokens = $this->loadTokens();
+
+        if (empty($tokens['access_token']) || empty($tokens['expires_at'])) {
             return false;
         }
 
         return $tokens['expires_at'] > time();
+    }
+
+    public function getPendingUserId(): ?string
+    {
+        return $_COOKIE['amo_pending_user_id'] ?? null;
     }
 
     /**
@@ -507,7 +523,10 @@ class OAuthClient
         $isAuthorized = $this->isAuthorized();
         $config = $this->getUserConfig();
         $clientId = $config['clientId'];
-        $state = $_SESSION['user_id'];
+        $activeUserId = $this->getCurrentUserId();
+        $users = $this->storage->listUsers();
+        $pendingUserId = $this->getPendingUserId();
+        $state = $activeUserId ?: $pendingUserId;
 
         ob_start();
         require __DIR__ . '/../views/auth_button.php';
@@ -521,7 +540,7 @@ class OAuthClient
      */
     public function logout(): void
     {
-        $userId = $this->forcedUserId ?? ($_SESSION['user_id'] ?? null);
+        $userId = $this->getCurrentUserId();
 
         if (!$userId) {
             return;
@@ -1306,7 +1325,54 @@ class OAuthClient
     // Получение текущего ID пользователя
     private function getCurrentUserId(): ?string
     {
-        return $this->forcedUserId ?? ($_SESSION['user_id'] ?? null);
+        if ($this->forcedUserId) {
+            return $this->forcedUserId;
+        }
+
+        $active = $_COOKIE[self::ACTIVE_USER_COOKIE] ?? null;
+        $active = is_string($active) ? trim($active) : '';
+
+        return $active !== '' ? $active : null;
+    }
+
+    public function setActiveUserId(?string $userId): void
+    {
+        $value = trim((string)$userId);
+
+        if ($value === '') {
+            $this->setCookieValue(self::ACTIVE_USER_COOKIE, '', time() - 3600);
+            unset($_COOKIE[self::ACTIVE_USER_COOKIE]);
+            return;
+        }
+
+        $this->setCookieValue(self::ACTIVE_USER_COOKIE, $value, time() + 31536000);
+        $_COOKIE[self::ACTIVE_USER_COOKIE] = $value;
+    }
+
+    public function clearPendingUserId(): void
+    {
+        $this->setCookieValue(self::PENDING_USER_COOKIE, '', time() - 3600);
+        unset($_COOKIE[self::PENDING_USER_COOKIE]);
+    }
+
+    public function startNewUserAuthorization(): string
+    {
+        $newId = bin2hex(random_bytes(16));
+        $this->setCookieValue(self::PENDING_USER_COOKIE, $newId, time() + 3600);
+        $_COOKIE[self::PENDING_USER_COOKIE] = $newId;
+        return $newId;
+    }
+
+    private function setCookieValue(string $name, string $value, int $expiresAt): void
+    {
+        $cookie = sprintf(
+            '%s=%s; Expires=%s; Path=/; Secure; SameSite=None',
+            rawurlencode($name),
+            rawurlencode($value),
+            gmdate('D, d M Y H:i:s T', $expiresAt)
+        );
+
+        header('Set-Cookie: ' . $cookie, false);
     }
 
     // Генерация ключа для кэширования на основе ID пользователя и произвольного ключа
