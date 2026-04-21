@@ -596,31 +596,17 @@ class OAuthClient
      */
     public function getContacts(int $limit = 50, int $page = 1): array
     {
-        $cacheKey = $this->getCacheKey("contacts_page_{$page}");
+        $limit = max(1, $limit);
+        $page = max(1, $page);
 
-        $cached = $this->storage->getCache($cacheKey);
+        $allContacts = $this->getAllContacts();
+        $offset = ($page - 1) * $limit;
 
-        if ($cached !== null) {
-            return $cached;
+        if ($offset >= count($allContacts)) {
+            return [];
         }
 
-        $config = $this->getUserConfig();
-        $domain = $config['baseDomain'];
-
-        $url = "https://{$domain}/api/v4/contacts?page={$page}&limit={$limit}";
-
-        $response = $this->sendRequest('GET', $url);
-
-        $result = $response['_embedded']['contacts'] ?? [];
-
-        $this->storage->saveCache(
-            $cacheKey,
-            $result,
-            60,
-            $this->getCurrentUserId()
-        );
-
-        return $result;
+        return array_slice($allContacts, $offset, $limit);
     }
 
     /**
@@ -631,7 +617,7 @@ class OAuthClient
      */
     public function getAllContacts(int $limit = 250): array
     {
-        $cacheKey = $this->getCacheKey("all_contacts_{$limit}");
+        $cacheKey = $this->getCacheKey('all_contacts');
 
         $cached = $this->storage->getCache($cacheKey);
 
@@ -643,7 +629,7 @@ class OAuthClient
         $page = 1;
 
         while (true) {
-            $contacts = $this->getContacts($limit, $page);
+            $contacts = $this->fetchContactsPageFromApi($limit, $page);
 
             if (empty($contacts)) {
                 break;
@@ -661,11 +647,25 @@ class OAuthClient
         $this->storage->saveCache(
             $cacheKey,
             $allContacts,
-            60,
+            0,
             $this->getCurrentUserId()
         );
 
         return $allContacts;
+    }
+
+    /**
+     * Загружает одну страницу контактов напрямую из API (без кеша страниц).
+     */
+    private function fetchContactsPageFromApi(int $limit, int $page): array
+    {
+        $config = $this->getUserConfig();
+        $domain = $config['baseDomain'];
+        $url = "https://{$domain}/api/v4/contacts?page={$page}&limit={$limit}";
+
+        $response = $this->sendRequest('GET', $url);
+
+        return $response['_embedded']['contacts'] ?? [];
     }
 
     /**
@@ -1446,6 +1446,102 @@ class OAuthClient
         }
 
         return $duplicates;
+    }
+
+    /**
+     * Загружает контакт по ID из amoCRM.
+     */
+    private function getContactById(int $contactId): ?array
+    {
+        if ($contactId <= 0) {
+            return null;
+        }
+
+        $config = $this->getUserConfig();
+        $domain = $config['baseDomain'];
+        $url = "https://{$domain}/api/v4/contacts/{$contactId}";
+
+        $response = $this->sendRequest('GET', $url);
+
+        return is_array($response) ? $response : null;
+    }
+
+    /**
+     * Добавляет/обновляет контакт в общем бессрочном кеше all_contacts_250.
+     */
+    public function upsertContactInAllContactsCache(int $contactId): bool
+    {
+        if ($contactId <= 0) {
+            return false;
+        }
+
+        $contact = $this->getContactById($contactId);
+        if (!$contact) {
+            return false;
+        }
+
+        $cacheKey = $this->getCacheKey('all_contacts');
+        $cached = $this->storage->getCache($cacheKey) ?? [];
+
+        $result = [];
+        $updated = false;
+
+        foreach ($cached as $item) {
+            $existingId = (int)($item['id'] ?? 0);
+            if ($existingId === $contactId) {
+                $result[] = $contact;
+                $updated = true;
+                continue;
+            }
+
+            $result[] = $item;
+        }
+
+        if (!$updated) {
+            $result[] = $contact;
+        }
+
+        $this->storage->saveCache($cacheKey, $result, 0, $this->getCurrentUserId());
+
+        return true;
+    }
+
+    /**
+     * Удаляет контакт из общего бессрочного кеша all_contacts_250.
+     */
+    public function removeContactFromAllContactsCache(int $contactId): bool
+    {
+        if ($contactId <= 0) {
+            return false;
+        }
+
+        $cacheKey = $this->getCacheKey('all_contacts');
+        $cached = $this->storage->getCache($cacheKey);
+
+        if ($cached === null) {
+            return false;
+        }
+
+        $result = [];
+        $removed = false;
+
+        foreach ($cached as $item) {
+            $existingId = (int)($item['id'] ?? 0);
+            if ($existingId === $contactId) {
+                $removed = true;
+                continue;
+            }
+
+            $result[] = $item;
+        }
+
+        if (!$removed) {
+            return false;
+        }
+
+        $this->storage->saveCache($cacheKey, $result, 0, $this->getCurrentUserId());
+
+        return true;
     }
 
     /**

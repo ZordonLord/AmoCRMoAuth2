@@ -292,7 +292,7 @@ class MysqlStorage implements StorageInterface
             ':key'        => $key,
             ':user_id'    => $userId,
             ':value'      => json_encode($data, JSON_UNESCAPED_UNICODE),
-            ':expires_at' => time() + $ttl,
+            ':expires_at' => $ttl > 0 ? (time() + $ttl) : 0,
         ]);
 
         if (!$success) {
@@ -322,7 +322,7 @@ class MysqlStorage implements StorageInterface
             return null;
         }
 
-        if ((int)$row['expires_at'] < time()) {
+        if ((int)$row['expires_at'] > 0 && (int)$row['expires_at'] < time()) {
             $this->db->prepare("
                 DELETE FROM cache
                 WHERE `key` = :key
@@ -345,7 +345,7 @@ class MysqlStorage implements StorageInterface
     {
         $this->db->prepare("
             DELETE FROM cache
-            WHERE expires_at < :time
+            WHERE expires_at > 0 AND expires_at < :time
         ")->execute([
             ':time' => time(),
         ]);

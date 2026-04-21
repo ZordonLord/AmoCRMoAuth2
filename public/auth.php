@@ -117,7 +117,7 @@ if (isset($_GET['code'])) {
         // Регистрируем вебхук для этого пользователя, если его ещё нет
         $client->registerWebhook(
             $config['webhookUrl'],
-            ['add_contact']
+            ['add_contact', 'update_contact', 'delete_contact']
         );
 
         safeRedirect('index.php');
