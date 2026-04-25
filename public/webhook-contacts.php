@@ -57,6 +57,18 @@ try {
         ? $_POST
         : json_decode(file_get_contents('php://input'), true);
 
+    // Быстрый ответ amoCRM, чтобы не держать его в ожидании
+    http_response_code(200);
+    echo json_encode(['success' => true]);
+    @ob_flush();
+    @flush();
+
+    if (function_exists('fastcgi_finish_request')) {
+        set_time_limit(0);
+        ignore_user_abort(true);
+        fastcgi_finish_request();
+    }
+
     if (!is_array($payload)) {
         throw new Exception('Некорректный webhook payload');
     }
@@ -74,18 +86,6 @@ try {
 
     if (!$user) {
         throw new Exception("Пользователь для домена {$baseDomain} не найден");
-    }
-
-    // Быстрый ответ amoCRM, чтобы не держать его в ожидании
-    http_response_code(200);
-    echo json_encode(['success' => true]);
-    @ob_flush();
-    @flush();
-
-    if (function_exists('fastcgi_finish_request')) {
-        set_time_limit(0);
-        ignore_user_abort(true);
-        fastcgi_finish_request();
     }
 
     // Устанавливаем контекст пользователя для работы с API amoCRM
@@ -107,7 +107,7 @@ try {
             continue;
         }
 
-        $client->upsertContactInAllContactsCache($contactId);
+        $client->upsertContactInDb($contactId);
 
         $selectedFields = $storage->getDuplicateCheckFields($user['id']);
 
@@ -161,7 +161,7 @@ try {
             continue;
         }
 
-        $client->upsertContactInAllContactsCache($contactId);
+        $client->upsertContactInDb($contactId);
         log_error('Webhook: контакт изменен', ['contact_id' => $contactId, 'domain' => $baseDomain]);
     }
 
@@ -172,7 +172,7 @@ try {
             continue;
         }
 
-        $client->removeContactFromAllContactsCache($contactId);
+        $client->deleteContactFromDb($contactId);
         log_error('Webhook: контакт удален', ['contact_id' => $contactId, 'domain' => $baseDomain]);
     }
 } catch (Throwable $e) {

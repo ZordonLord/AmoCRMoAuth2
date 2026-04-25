@@ -618,7 +618,7 @@ class OAuthClient
         $limit = max(1, $limit);
         $page = max(1, $page);
 
-        $allContacts = $this->getAllContacts();
+        $allContacts = $this->storage->getAllContactsFromDb($this->getCurrentUserId());
         $offset = ($page - 1) * $limit;
 
         if ($offset >= count($allContacts)) {
@@ -636,25 +636,39 @@ class OAuthClient
      */
     public function getAllContacts(int $limit = 250): array
     {
-        $cacheKey = $this->getCacheKey('all_contacts');
+        return $this->storage->getAllContactsFromDb($this->getCurrentUserId());
+    }
 
-        $cached = $this->storage->getCache($cacheKey);
+    /**
+     * Синхронизирует все контакты из API в локальную БД, загружая их постранично.
+     *
+     * @param int $limit количество контактов на страницу (макс. 250)
+     * @return void
+     * @throws Exception если пользователь не авторизован
+     */
+    public function syncContactsToDb(int $limit = 250): void
+    {
+        $userId = $this->getCurrentUserId();
 
-        if ($cached !== null) {
-            return $cached;
+        if (!$userId) {
+            throw new Exception('No user authorized');
         }
 
-        $allContacts = [];
         $page = 1;
 
         while (true) {
+
             $contacts = $this->fetchContactsPageFromApi($limit, $page);
 
             if (empty($contacts)) {
                 break;
             }
 
-            $allContacts = array_merge($allContacts, $contacts);
+            $this->storage->saveContactsBatch($contacts, $userId);
+
+            foreach ($contacts as $contact) {
+                $this->storage->saveContactFields($contact, $userId);
+            }
 
             if (count($contacts) < $limit) {
                 break;
@@ -662,15 +676,6 @@ class OAuthClient
 
             $page++;
         }
-
-        $this->storage->saveCache(
-            $cacheKey,
-            $allContacts,
-            0,
-            $this->getCurrentUserId()
-        );
-
-        return $allContacts;
     }
 
     /**
@@ -688,199 +693,33 @@ class OAuthClient
     }
 
     /**
-     * Поиск дубликатов контактов по телефону/email
+     * Функция поиска дубликатов по ключу поля (например, "SYSTEM:EMAIL" или "CUSTOM:12345")
      *
-     * @param string $type phone|email
-     * @return array
+     * @param string $fieldKey - ключ поля для поиска дубликатов, в формате "SYSTEM:FIELD_CODE" для системных полей или "CUSTOM:FIELD_ID" для кастомных полей
+     * @return array - массив с контактами-дубликатами, найденными в локальной БД по указанному полю
      */
-    public function findDuplicateContacts(string $type = 'phone'): array
+    public function findDuplicates(string $fieldKey): array
     {
-        $fieldCode = strtolower($type) === 'email' ? 'EMAIL' : 'PHONE';
+        $userId = $this->getCurrentUserId();
 
-        return $this->findDuplicateContactsByFieldCode($fieldCode);
-    }
-
-    /**
-     * Ищет дубликаты контактов по значению произвольного поля (field_code).
-     *
-     * @param string $fieldCode
-     * @return array
-     */
-    public function findDuplicateContactsByFieldCode(string $fieldCode): array
-    {
-        $targetCode = strtoupper(trim($fieldCode));
-        if ($targetCode === '') {
+        if (!$userId) {
             return [];
         }
 
-        $contacts = $this->getAllContacts();
+        [$kind, $value] = array_pad(explode(':', $fieldKey, 2), 2, null);
 
-        $map = [];
-        $seenByContact = [];
+        $kind = strtoupper(trim((string)$kind));
+        $value = trim((string)$value);
 
-        foreach ($contacts as $contact) {
-            $contactId = (int)($contact['id'] ?? 0);
-            $contactName = trim((string)($contact['name'] ?? '')) ?: 'Без имени';
-
-            if ($contactId <= 0) {
-                continue;
-            }
-
-            $customFields = $contact['custom_fields_values'] ?? [];
-            if (!is_array($customFields)) {
-                continue;
-            }
-
-            foreach ($customFields as $field) {
-                $fieldCodeFromContact = strtoupper((string)($field['field_code'] ?? ''));
-                if ($fieldCodeFromContact !== $targetCode) {
-                    continue;
-                }
-
-                $values = $field['values'] ?? [];
-                if (!is_array($values)) {
-                    continue;
-                }
-
-                foreach ($values as $valueItem) {
-                    $rawValue = trim((string)($valueItem['value'] ?? ''));
-                    if ($rawValue === '') {
-                        continue;
-                    }
-
-                    $normalizedValue = $this->normalizeDuplicateValue($rawValue, $targetCode);
-                    if ($normalizedValue === '' || $normalizedValue === null) {
-                        continue;
-                    }
-
-                    $dedupeKey = $contactId . '|' . $normalizedValue;
-                    if (isset($seenByContact[$dedupeKey])) {
-                        continue;
-                    }
-
-                    $seenByContact[$dedupeKey] = true;
-
-                    if (!isset($map[$normalizedValue])) {
-                        $map[$normalizedValue] = [];
-                    }
-
-                    $map[$normalizedValue][] = [
-                        'id' => $contactId,
-                        'name' => $contactName,
-                        'raw_value' => $rawValue
-                    ];
-                }
-            }
+        if ($kind === 'SYSTEM') {
+            return $this->storage->findDuplicatesByFieldCode($value, $userId);
         }
 
-        $duplicates = [];
-        foreach ($map as $value => $items) {
-            if (count($items) <= 1) {
-                continue;
-            }
-
-            $duplicates[] = [
-                'value' => $value,
-                'contacts' => $items
-            ];
+        if ($kind === 'CUSTOM') {
+            return $this->storage->findDuplicatesByFieldId((int)$value, $userId);
         }
 
-        usort($duplicates, function (array $a, array $b): int {
-            return count($b['contacts']) <=> count($a['contacts']);
-        });
-
-        return $duplicates;
-    }
-
-    /**
-     * Ищет дубликаты контактов по field_id пользовательского поля.
-     *
-     * @param int $fieldId
-     * @return array
-     */
-    public function findDuplicateContactsByCustomFieldId(int $fieldId): array
-    {
-        if ($fieldId <= 0) {
-            return [];
-        }
-
-        $contacts = $this->getAllContacts();
-
-        $map = [];
-        $seenByContact = [];
-
-        foreach ($contacts as $contact) {
-            $contactId = (int)($contact['id'] ?? 0);
-            $contactName = trim((string)($contact['name'] ?? '')) ?: 'Без имени';
-
-            if ($contactId <= 0) {
-                continue;
-            }
-
-            $customFields = $contact['custom_fields_values'] ?? [];
-            if (!is_array($customFields)) {
-                continue;
-            }
-
-            foreach ($customFields as $field) {
-                $fieldIdFromContact = (int)($field['field_id'] ?? 0);
-                if ($fieldIdFromContact !== $fieldId) {
-                    continue;
-                }
-
-                $values = $field['values'] ?? [];
-                if (!is_array($values)) {
-                    continue;
-                }
-
-                foreach ($values as $valueItem) {
-                    $rawValue = trim((string)($valueItem['value'] ?? ''));
-                    if ($rawValue === '') {
-                        continue;
-                    }
-
-                    $normalizedValue = $this->normalizeDuplicateCustomValue($rawValue);
-                    if ($normalizedValue === '' || $normalizedValue === null) {
-                        continue;
-                    }
-
-                    $dedupeKey = $contactId . '|' . $normalizedValue;
-                    if (isset($seenByContact[$dedupeKey])) {
-                        continue;
-                    }
-
-                    $seenByContact[$dedupeKey] = true;
-
-                    if (!isset($map[$normalizedValue])) {
-                        $map[$normalizedValue] = [];
-                    }
-
-                    $map[$normalizedValue][] = [
-                        'id' => $contactId,
-                        'name' => $contactName,
-                        'raw_value' => $rawValue
-                    ];
-                }
-            }
-        }
-
-        $duplicates = [];
-        foreach ($map as $value => $items) {
-            if (count($items) <= 1) {
-                continue;
-            }
-
-            $duplicates[] = [
-                'value' => $value,
-                'contacts' => $items
-            ];
-        }
-
-        usort($duplicates, function (array $a, array $b): int {
-            return count($b['contacts']) <=> count($a['contacts']);
-        });
-
-        return $duplicates;
+        return [];
     }
 
     /**
@@ -1411,103 +1250,46 @@ class OAuthClient
             return [];
         }
 
-        $contacts = $this->getAllContacts();
-
-        $newContact = null;
-
-        foreach ($contacts as $contact) {
-            if ((int)($contact['id'] ?? 0) === $contactId) {
-                $newContact = $contact;
-                break;
-            }
+        $userId = $this->getCurrentUserId();
+        if (!$userId) {
+            return [];
         }
 
-        if (!$newContact) {
+        // получаем значения контакта из БД (нужно сделать метод)
+        $values = $this->storage->getContactFieldValues($contactId, $userId);
+
+        if (empty($values)) {
             return [];
         }
 
         $duplicates = [];
 
-        foreach (($newContact['custom_fields_values'] ?? []) as $field) {
+        foreach ($values as $field) {
 
-            $fieldId = (int)($field['field_id'] ?? 0);
-            $fieldKey = 'CUSTOM:' . $fieldId;
-
-            $fieldCode = strtoupper(trim((string)($field['field_code'] ?? '')));
-
-            if ($fieldCode === 'PHONE') {
-                $fieldKey = 'SYSTEM:PHONE';
-            }
-
-            if ($fieldCode === 'EMAIL') {
-                $fieldKey = 'SYSTEM:EMAIL';
-            }
+            $fieldKey = $field['field_key']; // SYSTEM:PHONE или CUSTOM:123
 
             if (!empty($allowedFields) && !in_array($fieldKey, $allowedFields, true)) {
                 continue;
             }
-            $fieldName = trim((string)($field['field_name'] ?? 'Поле #' . $fieldId));
 
-            if ($fieldId <= 0) {
-                continue;
-            }
+            // Ищем через БД
+            $found = $this->storage->findDuplicatesForValue(
+                $field['normalized_value'],
+                $field['field_code'],
+                $field['field_id'],
+                $userId,
+                $contactId // исключаем самого себя
+            );
 
-            foreach (($field['values'] ?? []) as $valueItem) {
-
-                $rawValue = trim((string)($valueItem['value'] ?? ''));
-
-                if ($rawValue === '') {
-                    continue;
-                }
-
-                $normalized = $this->normalizeDuplicateCustomValue($rawValue);
-
-                if ($normalized === '') {
-                    continue;
-                }
-
-                foreach ($contacts as $contact) {
-
-                    $otherId = (int)($contact['id'] ?? 0);
-
-                    if ($otherId <= 0 || $otherId === $contactId) {
-                        continue;
-                    }
-
-                    foreach (($contact['custom_fields_values'] ?? []) as $otherField) {
-
-                        if ((int)($otherField['field_id'] ?? 0) !== $fieldId) {
-                            continue;
-                        }
-
-                        foreach (($otherField['values'] ?? []) as $otherValueItem) {
-
-                            $otherRaw = trim((string)($otherValueItem['value'] ?? ''));
-
-                            if ($otherRaw === '') {
-                                continue;
-                            }
-
-                            $otherNormalized = $this->normalizeDuplicateCustomValue($otherRaw);
-
-                            if ($otherNormalized === $normalized) {
-
-                                $fieldType = (string)($field['field_type'] ?? $field['type'] ?? '');
-
-                                $duplicates[] = [
-                                    'field_id' => $fieldId,
-                                    'field_name' => $fieldName,
-                                    'field_value' => $rawValue,
-                                    'field_type' => $fieldType,
-                                    'id' => $otherId,
-                                    'name' => $contact['name'] ?? 'Без имени',
-                                ];
-
-                                break 2;
-                            }
-                        }
-                    }
-                }
+            foreach ($found as $item) {
+                $duplicates[] = [
+                    'field_id'    => $field['field_id'],
+                    'field_name'  => $field['field_name'],
+                    'field_value' => $field['raw_value'],
+                    'field_type'  => $field['field_type'],
+                    'id'          => $item['id'],
+                    'name'        => $item['name'],
+                ];
             }
         }
 
@@ -1533,81 +1315,43 @@ class OAuthClient
     }
 
     /**
-     * Добавляет/обновляет контакт в общем бессрочном кеше all_contacts_250.
+     * Добавляет или обновляет контакт в локальной БД на основе данных из amoCRM.
+     *
+     * @param integer $contactId - ID контакта для загрузки и сохранения
+     * @return void
      */
-    public function upsertContactInAllContactsCache(int $contactId): bool
+    public function upsertContactInDb(int $contactId): void
     {
-        if ($contactId <= 0) {
-            return false;
+        $userId = $this->getCurrentUserId();
+
+        if (!$userId || $contactId <= 0) {
+            return;
         }
 
         $contact = $this->getContactById($contactId);
+
         if (!$contact) {
-            return false;
+            return;
         }
 
-        $cacheKey = $this->getCacheKey('all_contacts');
-        $cached = $this->storage->getCache($cacheKey) ?? [];
-
-        $result = [];
-        $updated = false;
-
-        foreach ($cached as $item) {
-            $existingId = (int)($item['id'] ?? 0);
-            if ($existingId === $contactId) {
-                $result[] = $contact;
-                $updated = true;
-                continue;
-            }
-
-            $result[] = $item;
-        }
-
-        if (!$updated) {
-            $result[] = $contact;
-        }
-
-        $this->storage->saveCache($cacheKey, $result, 0, $this->getCurrentUserId());
-
-        return true;
+        $this->storage->upsertContact($contact, $userId);
     }
 
     /**
-     * Удаляет контакт из общего бессрочного кеша all_contacts_250.
+     * Удаляет контакт из локальной БД по ID.
+     *
+     * @param integer $contactId - ID контакта для удаления
+     * @return void
      */
-    public function removeContactFromAllContactsCache(int $contactId): bool
+    public function deleteContactFromDb(int $contactId): void
     {
-        if ($contactId <= 0) {
-            return false;
+        $userId = $this->getCurrentUserId();
+
+        if (!$userId || $contactId <= 0) {
+            return;
         }
 
-        $cacheKey = $this->getCacheKey('all_contacts');
-        $cached = $this->storage->getCache($cacheKey);
-
-        if ($cached === null) {
-            return false;
-        }
-
-        $result = [];
-        $removed = false;
-
-        foreach ($cached as $item) {
-            $existingId = (int)($item['id'] ?? 0);
-            if ($existingId === $contactId) {
-                $removed = true;
-                continue;
-            }
-
-            $result[] = $item;
-        }
-
-        if (!$removed) {
-            return false;
-        }
-
-        $this->storage->saveCache($cacheKey, $result, 0, $this->getCurrentUserId());
-
-        return true;
+        $this->storage->deleteContact($contactId, $userId);
     }
 
     /**

@@ -31,4 +31,18 @@ CREATE TABLE IF NOT EXISTS cache (
 );
 ");
 
+$this->db->exec("
+CREATE TABLE IF NOT EXISTS contacts (
+    id INTEGER PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT,
+    data TEXT NOT NULL,
+    updated_at INTEGER
+);
+");
+
+$this->db->exec("
+CREATE INDEX IF NOT EXISTS idx_contacts_user_id ON contacts(user_id);
+");
+
 echo "Database initialized!";

@@ -64,6 +64,34 @@ class SqliteStorage implements StorageInterface
                 ON cache(user_id);
         ");
 
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS contacts (
+                id INTEGER,
+                user_id TEXT,
+                name TEXT,
+                data TEXT,
+                updated_at INTEGER,
+                PRIMARY KEY (id, user_id)
+            );
+        ");
+
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS contact_field_values (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contact_id INTEGER,
+                user_id TEXT,
+                field_code TEXT,
+                field_id INTEGER,
+                value TEXT,
+                normalized_value TEXT
+            );
+        ");
+
+        $this->db->exec("
+            CREATE INDEX IF NOT EXISTS idx_field_search 
+            ON contact_field_values(user_id, field_code, normalized_value);
+        ");
+
         $this->migrate();
     }
 
@@ -389,5 +417,386 @@ class SqliteStorage implements StorageInterface
         $data = json_decode($row['duplicate_check_fields'], true);
 
         return is_array($data) ? $data : [];
+    }
+
+    /**
+     * Сохранение контактов пачкой
+     */
+    public function saveContactsBatch(array $contacts, string $userId): void
+    {
+        $this->db->beginTransaction();
+
+        $stmt = $this->db->prepare("
+        INSERT OR REPLACE INTO contacts (id, user_id, name, data, updated_at)
+        VALUES (:id, :user_id, :name, :data, :updated_at)
+    ");
+
+        foreach ($contacts as $contact) {
+
+            $contactId = (int)($contact['id'] ?? 0);
+            if ($contactId <= 0) {
+                continue;
+            }
+
+            $stmt->execute([
+                ':id' => $contactId,
+                ':user_id' => $userId,
+                ':name' => $contact['name'] ?? '',
+                ':data' => json_encode($contact, JSON_UNESCAPED_UNICODE),
+                ':updated_at' => time()
+            ]);
+
+            $this->saveContactFields($contact, $userId);
+        }
+
+        $this->db->commit();
+    }
+
+    /**
+     * Получение всех контактов из БД
+     */
+    public function getAllContactsFromDb(string $userId): array
+    {
+        $stmt = $this->db->prepare("
+        SELECT data FROM contacts WHERE user_id = :user_id
+    ");
+
+        $stmt->execute([':user_id' => $userId]);
+
+        $result = [];
+
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $result[] = json_decode($row['data'], true);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Очистка контактов пользователя
+     */
+    public function clearContacts(string $userId): void
+    {
+        $stmt = $this->db->prepare("
+        DELETE FROM contacts WHERE user_id = :user_id
+    ");
+
+        $stmt->execute([':user_id' => $userId]);
+    }
+
+    /**
+     * Сохранение полей контакта для проверки дублей
+     */
+    public function saveContactFields(array $contact, string $userId): void
+    {
+        $contactId = (int)($contact['id'] ?? 0);
+
+        if ($contactId <= 0) {
+            return;
+        }
+
+        $this->db->prepare("
+        DELETE FROM contact_field_values
+        WHERE contact_id = :contact_id AND user_id = :user_id
+    ")->execute([
+            ':contact_id' => $contactId,
+            ':user_id' => $userId
+        ]);
+
+        $stmt = $this->db->prepare("
+        INSERT INTO contact_field_values
+        (contact_id, user_id, field_code, field_id, value, normalized_value)
+        VALUES (:contact_id, :user_id, :field_code, :field_id, :value, :normalized)
+    ");
+
+        foreach ($contact['custom_fields_values'] ?? [] as $field) {
+
+            $fieldCode = strtoupper(trim($field['field_code'] ?? ''));
+            $fieldId   = (int)($field['field_id'] ?? 0);
+
+            foreach ($field['values'] ?? [] as $v) {
+
+                $value = trim((string)($v['value'] ?? ''));
+                if ($value === '') {
+                    continue;
+                }
+
+                $normalized = $this->normalizeValue($value, $fieldCode);
+                if ($normalized === '') {
+                    continue;
+                }
+
+                $stmt->execute([
+                    ':contact_id' => $contactId,
+                    ':user_id' => $userId,
+                    ':field_code' => $fieldCode,
+                    ':field_id' => $fieldId,
+                    ':value' => $value,
+                    ':normalized' => $normalized
+                ]);
+            }
+        }
+    }
+
+    /**
+     * Нормализация значения для сравнения (например, для телефонов и email)
+     */
+    private function normalizeValue(string $value, string $fieldCode): string
+    {
+        $value = trim($value);
+
+        if ($value === '') {
+            return '';
+        }
+
+        // EMAIL
+        if ($fieldCode === 'EMAIL') {
+            return strtolower($value);
+        }
+
+        // PHONE
+        if ($fieldCode === 'PHONE') {
+
+            $digits = preg_replace('/\D+/', '', $value);
+
+            // нормализация РФ номера
+            if (strlen($digits) === 11 && $digits[0] === '8') {
+                $digits[0] = '7';
+            }
+
+            return $digits;
+        }
+
+        // generic text
+        $value = preg_replace('/\s+/u', ' ', $value);
+
+        return function_exists('mb_strtolower')
+            ? mb_strtolower($value, 'UTF-8')
+            : strtolower($value);
+    }
+
+    /**
+     * Добавление или обновление контакта
+     */
+    public function upsertContact(array $contact, string $userId): void
+    {
+        $stmt = $this->db->prepare("
+        INSERT OR REPLACE INTO contacts (id, user_id, name, data, updated_at)
+        VALUES (:id, :user_id, :name, :data, :updated_at)
+    ");
+
+        $stmt->execute([
+            ':id' => $contact['id'],
+            ':user_id' => $userId,
+            ':name' => $contact['name'] ?? '',
+            ':data' => json_encode($contact),
+            ':updated_at' => time()
+        ]);
+
+        $this->saveContactFields($contact, $userId);
+    }
+
+    /**
+     * Удаление контакта
+     */
+    public function deleteContact(int $contactId, string $userId): void
+    {
+        $this->db->prepare("
+        DELETE FROM contacts WHERE id = :id AND user_id = :user_id
+    ")->execute([
+            ':id' => $contactId,
+            ':user_id' => $userId
+        ]);
+
+        $this->db->prepare("
+        DELETE FROM contact_field_values 
+        WHERE contact_id = :id AND user_id = :user_id
+    ")->execute([
+            ':id' => $contactId,
+            ':user_id' => $userId
+        ]);
+    }
+
+    /**
+     * Поиск дубликатов по коду поля
+     */
+    public function findDuplicatesByFieldCode(string $fieldCode, string $userId): array
+    {
+        $fieldCode = strtoupper(trim($fieldCode));
+
+        if ($fieldCode === '') {
+            return [];
+        }
+
+        $stmt = $this->db->prepare("
+        SELECT 
+            cfv.normalized_value,
+            c.id,
+            c.name
+        FROM contact_field_values cfv
+        JOIN contacts c 
+          ON c.id = cfv.contact_id 
+         AND c.user_id = cfv.user_id
+        WHERE cfv.user_id = :user_id
+          AND cfv.field_code = :field_code
+          AND cfv.normalized_value IN (
+              SELECT normalized_value
+              FROM contact_field_values
+              WHERE user_id = :user_id
+                AND field_code = :field_code
+              GROUP BY normalized_value
+              HAVING COUNT(DISTINCT contact_id) > 1
+          )
+        ORDER BY cfv.normalized_value
+    ");
+
+        $stmt->execute([
+            ':user_id' => $userId,
+            ':field_code' => $fieldCode
+        ]);
+
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        return $this->groupDuplicates($rows);
+    }
+
+    /**
+     * Поиск дубликатов по ID поля
+     */
+    public function findDuplicatesByFieldId(int $fieldId, string $userId): array
+    {
+        if ($fieldId <= 0) {
+            return [];
+        }
+
+        $stmt = $this->db->prepare("
+        SELECT 
+            cfv.normalized_value,
+            c.id,
+            c.name
+        FROM contact_field_values cfv
+        JOIN contacts c 
+          ON c.id = cfv.contact_id 
+         AND c.user_id = cfv.user_id
+        WHERE cfv.user_id = :user_id
+          AND cfv.field_id = :field_id
+          AND cfv.normalized_value IN (
+              SELECT normalized_value
+              FROM contact_field_values
+              WHERE user_id = :user_id
+                AND field_id = :field_id
+              GROUP BY normalized_value
+              HAVING COUNT(DISTINCT contact_id) > 1
+          )
+        ORDER BY cfv.normalized_value
+    ");
+
+        $stmt->execute([
+            ':user_id' => $userId,
+            ':field_id' => $fieldId
+        ]);
+
+        return $this->groupDuplicates($stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    /**
+     * Группировка результатов поиска дублей по нормализованному значению
+     */
+    private function groupDuplicates(array $rows): array
+    {
+        $map = [];
+
+        foreach ($rows as $row) {
+
+            $value = $row['normalized_value'];
+
+            if (!isset($map[$value])) {
+                $map[$value] = [
+                    'value' => $value,
+                    'contacts' => []
+                ];
+            }
+
+            $map[$value]['contacts'][] = [
+                'id' => $row['id'],
+                'name' => $row['name']
+            ];
+        }
+
+        return array_values($map);
+    }
+
+    /**
+     * Получение всех значений полей контакта
+     */
+    public function getContactFieldValues(int $contactId, string $userId): array
+    {
+        $stmt = $this->db->prepare("
+        SELECT *
+        FROM contact_field_values
+        WHERE contact_id = :contact_id
+          AND user_id = :user_id
+    ");
+
+        $stmt->execute([
+            ':contact_id' => $contactId,
+            ':user_id' => $userId
+        ]);
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    /**
+     * Поиск контактов с таким же значением поля (для проверки при сохранении)
+     */
+    public function findDuplicatesForValue(
+        string $normalizedValue,
+        ?string $fieldCode,
+        ?int $fieldId,
+        string $userId,
+        int $excludeContactId
+    ): array {
+
+        if ($normalizedValue === '') {
+            return [];
+        }
+
+        if ($fieldCode) {
+            $stmt = $this->db->prepare("
+            SELECT c.id, c.name
+            FROM contact_field_values v
+            JOIN contacts c ON c.id = v.contact_id
+            WHERE v.user_id = :user_id
+              AND v.field_code = :field_code
+              AND v.normalized_value = :value
+              AND v.contact_id != :exclude_id
+        ");
+
+            $stmt->execute([
+                ':user_id' => $userId,
+                ':field_code' => $fieldCode,
+                ':value' => $normalizedValue,
+                ':exclude_id' => $excludeContactId
+            ]);
+        } else {
+            $stmt = $this->db->prepare("
+            SELECT c.id, c.name
+            FROM contact_field_values v
+            JOIN contacts c ON c.id = v.contact_id
+            WHERE v.user_id = :user_id
+              AND v.field_id = :field_id
+              AND v.normalized_value = :value
+              AND v.contact_id != :exclude_id
+        ");
+
+            $stmt->execute([
+                ':user_id' => $userId,
+                ':field_id' => $fieldId,
+                ':value' => $normalizedValue,
+                ':exclude_id' => $excludeContactId
+            ]);
+        }
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     }
 }

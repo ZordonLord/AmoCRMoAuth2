@@ -10,6 +10,8 @@ return [
     'redirectUri'  => $_ENV['AMO_REDIRECT_URI'],
     'baseDomain'   => $_ENV['AMO_BASE_DOMAIN'],
 
+    'baseUrl'      => $_ENV['AMO_BASE_URL'],
+
     // URL для приема webhook от amoCRM
     'webhookUrl'   => $_ENV['WEBHOOK_URL'],
 

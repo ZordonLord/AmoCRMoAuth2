@@ -1,11 +1,11 @@
 <?php // Шаблон для отображения кнопки авторизации или выхода в зависимости от состояния авторизации
 if ($isAuthorized): ?>
-    <a href="auth.php?action=logout" class="btn">Выйти</a>
+    <a href="auth.php?action=logout" class="btn mt-3">Выйти</a>
 
     <form method="GET" action="auth.php" style="margin-bottom: 12px;">
         <input type="hidden" name="action" value="switchUser">
         <label for="active_user_id">Пользователь:</label>
-        <select name="user_id" id="active_user_id">
+        <select name="user_id" id="active_user_id" class="form-select">
             <option value="">Новый пользователь (новая авторизация)</option>
             <?php foreach ($users as $user): ?>
                 <?php
@@ -23,13 +23,13 @@ if ($isAuthorized): ?>
                 </option>
             <?php endforeach; ?>
         </select>
-        <button type="submit" class="btn">Переключить</button>
+        <button type="submit" class="btn mt-3">Переключить</button>
     </form>
 <?php else: ?>
     <form method="GET" action="auth.php" style="margin-bottom: 12px;">
         <input type="hidden" name="action" value="switchUser">
         <label for="active_user_id">Пользователь:</label>
-        <select name="user_id" id="active_user_id">
+        <select name="user_id" id="active_user_id" class="form-select">
             <option value="">Новый пользователь (новая авторизация)</option>
             <?php foreach ($users as $user): ?>
                 <?php
@@ -47,7 +47,7 @@ if ($isAuthorized): ?>
                 </option>
             <?php endforeach; ?>
         </select>
-        <button type="submit" class="btn">Переключить</button>
+        <button type="submit" class="btn mt-3">Переключить</button>
     </form>
 
     <script
